@@ -50,9 +50,18 @@ async function run() {
     }
   }
 
-  console.log(`Upserting ${rows.length} vote rows (skipped ${skippedUntrackedVoter} votes by untracked voters)`);
-  if (rows.length > 0) {
-    const { error } = await supabase.from("votes").upsert(rows, { onConflict: "politician_id,openstates_vote_id" });
+  // A bill can shift between pages if it's updated mid-pagination (sorted by
+  // most-recently-updated, and NY's legislature is actively in session), which
+  // duplicates all of its votes. Dedupe on the same key as the DB constraint
+  // before upserting, since ON CONFLICT can't affect the same row twice in one statement.
+  const dedupedRows = [...new Map(rows.map((row) => [`${row.politician_id}:${row.openstates_vote_id}`, row])).values()];
+  const duplicateCount = rows.length - dedupedRows.length;
+
+  console.log(
+    `Upserting ${dedupedRows.length} vote rows (skipped ${skippedUntrackedVoter} votes by untracked voters, ${duplicateCount} duplicates)`,
+  );
+  if (dedupedRows.length > 0) {
+    const { error } = await supabase.from("votes").upsert(dedupedRows, { onConflict: "politician_id,openstates_vote_id" });
     if (error) throw error;
   }
 
