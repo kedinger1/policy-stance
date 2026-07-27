@@ -8,14 +8,17 @@
     "start": "next start",
     "lint": "eslint",
     "ingest:politicians": "tsx scripts/ingest-politicians.ts",
-    "ingest:votes": "tsx scripts/ingest-votes.ts"
+    "ingest:votes": "tsx scripts/ingest-votes.ts",
+    "ingest:positions": "tsx scripts/ingest-positions.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
     "@supabase/supabase-js": "^2.110.9",
     "dotenv": "^17.4.2",
     "next": "16.2.12",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

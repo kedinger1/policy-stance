@@ -13,4 +13,5 @@ export const env = {
   supabaseUrl: requireEnv("NEXT_PUBLIC_SUPABASE_URL"),
   supabaseServiceRoleKey: requireEnv("SUPABASE_SERVICE_ROLE_KEY"),
   openStatesApiKey: requireEnv("OPENSTATES_API_KEY"),
+  anthropicApiKey: requireEnv("ANTHROPIC_API_KEY"),
 };
