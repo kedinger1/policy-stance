@@ -1,14 +1,24 @@
 import { supabase } from "./lib/supabase";
 
 async function run() {
-  const { data, error } = await supabase
-    .from("positions")
-    .select("topic, statement_text, source_type, source_url, stated_at, extraction_confidence")
-    .order("stated_at", { ascending: false })
-    .limit(12);
-  if (error) throw error;
-  for (const row of data) {
-    console.log(JSON.stringify(row, null, 2));
+  const { data: politicians, error: pError } = await supabase
+    .from("politicians")
+    .select("id, full_name")
+    .in("full_name", ["Al Stirpe", "Al Taylor"]);
+  if (pError) throw pError;
+
+  for (const politician of politicians) {
+    console.log(`\n=== ${politician.full_name} ===`);
+    const { data, error } = await supabase
+      .from("positions")
+      .select("topic, statement_text, source_type, source_url, stated_at, extraction_confidence")
+      .eq("politician_id", politician.id)
+      .order("stated_at", { ascending: false });
+    if (error) throw error;
+    for (const row of data) {
+      console.log(`[${row.stated_at}] (${row.topic}, conf ${row.extraction_confidence}) ${row.statement_text}`);
+      console.log(`  ${row.source_url}`);
+    }
   }
 }
 
