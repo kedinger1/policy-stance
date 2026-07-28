@@ -65,6 +65,8 @@ export function researchPositionsViaCodex(politicianName: string, chamber: strin
     `For each position found, record: topic, what they said (their own words or a close paraphrase), the exact date the statement was made or published, and the source URL. ` +
     `A specific date is required — an article publish date, a press release date, a speech date, a social media post's timestamp. ` +
     `Generic biographical or "about me" page content that isn't tied to a specific date is NOT a position statement — leave it out entirely rather than guessing a date for it. ` +
+    `A voting record entry ("voted yes/no on bill X") is NOT a position statement by itself — votes are tracked separately elsewhere. ` +
+    `Only include it if they also explained their reasoning in their own words (a floor speech, press release, or sponsor memo quote); the statement_text should be what they said, not just how they voted. ` +
     `Only include statements you can attribute to a real, findable source with a URL. If you find nothing credible and dated for a topic, skip it — do not fabricate content or dates. ` +
     `Respond with the final JSON result only, matching the provided schema.`;
 

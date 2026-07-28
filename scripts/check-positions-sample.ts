@@ -1,10 +1,9 @@
 import { supabase } from "./lib/supabase";
 
+const NAMES = ["Alec Brook-Krasny", "Alex Bores", "Alexis Weik"];
+
 async function run() {
-  const { data: politicians, error: pError } = await supabase
-    .from("politicians")
-    .select("id, full_name")
-    .in("full_name", ["Al Stirpe", "Al Taylor"]);
+  const { data: politicians, error: pError } = await supabase.from("politicians").select("id, full_name").in("full_name", NAMES);
   if (pError) throw pError;
 
   for (const politician of politicians) {
