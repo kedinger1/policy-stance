@@ -1,65 +1,74 @@
-import Image from "next/image";
+import Link from "next/link";
+import { supabase } from "@/lib/supabase";
+import { summarizeMatches } from "@/lib/scoring";
 
-export default function Home() {
+export const revalidate = 0;
+
+export default async function Home() {
+  const { data: positionRows, error: posError } = await supabase.from("positions").select("politician_id");
+  if (posError) throw posError;
+  const researchedIds = [...new Set(positionRows.map((r) => r.politician_id))];
+
+  const { data: politicians, error: pError } = await supabase
+    .from("politicians")
+    .select("id, full_name, chamber, state, district")
+    .in("id", researchedIds)
+    .order("full_name");
+  if (pError) throw pError;
+
+  const { data: allPositions, error: allPosError } = await supabase
+    .from("positions")
+    .select("politician_id")
+    .in("politician_id", researchedIds);
+  if (allPosError) throw allPosError;
+
+  const { data: allMatches, error: allMatchError } = await supabase
+    .from("matches")
+    .select("politician_id, classification")
+    .in("politician_id", researchedIds);
+  if (allMatchError) throw allMatchError;
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+    <div className="mx-auto max-w-3xl px-6 py-12">
+      <div className="mb-1 font-mono text-xs uppercase tracking-wider text-teal-700 dark:text-teal-400">
+        policy-stance — pilot review
+      </div>
+      <h1 className="text-2xl font-semibold tracking-tight text-stone-900 dark:text-stone-50">Politicians</h1>
+      <p className="mt-2 max-w-xl text-stone-600 dark:text-stone-400">
+        Every position and vote-match below is AI-sourced (Codex CLI) and reviewable — click through to see the
+        underlying quotes, sources, and rationale behind each score.
+      </p>
+
+      <ul className="mt-8 divide-y divide-stone-200 dark:divide-stone-800">
+        {politicians.map((politician) => {
+          const positionCount = allPositions.filter((p) => p.politician_id === politician.id).length;
+          const matches = allMatches.filter((m) => m.politician_id === politician.id);
+          const summary = summarizeMatches(matches);
+
+          return (
+            <li key={politician.id}>
+              <Link
+                href={`/politicians/${politician.id}`}
+                className="flex items-center justify-between gap-4 py-4 transition-colors hover:bg-stone-50 dark:hover:bg-stone-900"
+              >
+                <div>
+                  <div className="font-medium text-stone-900 dark:text-stone-50">{politician.full_name}</div>
+                  <div className="font-mono text-xs text-stone-500 dark:text-stone-500">
+                    {politician.state} · {politician.chamber}
+                    {politician.district ? ` · District ${politician.district}` : ""}
+                  </div>
+                </div>
+                <div className="flex items-center gap-4 font-mono text-xs text-stone-500 dark:text-stone-500">
+                  <span>{positionCount} positions</span>
+                  <span>
+                    {summary.consistency === null ? "—" : `${Math.round(summary.consistency * 100)}% consistent`}
+                  </span>
+                </div>
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }
