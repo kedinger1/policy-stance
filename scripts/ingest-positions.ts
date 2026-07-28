@@ -1,16 +1,21 @@
 import { supabase } from "./lib/supabase";
 import { researchPositionsViaCodex } from "./lib/codex";
 
-// Small pilot batch while validating the extraction pipeline — raise once confirmed good.
-const PILOT_LIMIT = 2;
+// How many additional politicians (beyond ones already researched) to process this run.
+const BATCH_SIZE = 3;
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 async function run() {
-  const { data: politicians, error } = await supabase
-    .from("politicians")
-    .select("id, full_name, chamber, state")
-    .limit(PILOT_LIMIT);
+  const { data: existing, error: existingError } = await supabase.from("positions").select("politician_id");
+  if (existingError) throw existingError;
+  const alreadyResearched = [...new Set(existing.map((row) => row.politician_id))];
+
+  let query = supabase.from("politicians").select("id, full_name, chamber, state").order("full_name").limit(BATCH_SIZE);
+  if (alreadyResearched.length > 0) {
+    query = query.not("id", "in", `(${alreadyResearched.join(",")})`);
+  }
+  const { data: politicians, error } = await query;
   if (error) throw error;
 
   for (const politician of politicians) {
