@@ -2,7 +2,7 @@ import { supabase } from "./lib/supabase";
 import { researchPositionsViaCodex } from "./lib/codex";
 
 // How many additional politicians (beyond ones already researched) to process this run.
-const BATCH_SIZE = 3;
+const BATCH_SIZE = 10;
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
