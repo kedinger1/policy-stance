@@ -5,6 +5,10 @@ import { tagVoteTopics, classifyMatches, type MatchCandidate } from "./lib/codex
 // rather than auto-published.
 const CONFIDENCE_THRESHOLD = 0.75;
 
+// Below this relevance (1-10), a topically-tagged bill is treated as too tangential
+// to be a meaningful test of a position — excluded before it ever reaches judgment.
+const RELEVANCE_THRESHOLD = 6;
+
 async function run() {
   const { data: politicianIdsWithPositions, error: posError } = await supabase.from("positions").select("politician_id");
   if (posError) throw posError;
@@ -40,18 +44,22 @@ async function run() {
     totalVotes += votes.length;
 
     const labeledVotes = votes.map((v, i) => ({ label: `v${i}`, billTitle: v.bill_title, vote: v }));
-    const topicByLabel = tagVoteTopics(labeledVotes.map(({ label, billTitle }) => ({ label, billTitle })));
+    const tagByLabel = tagVoteTopics(labeledVotes.map(({ label, billTitle }) => ({ label, billTitle })));
 
-    const taggedVotes = labeledVotes.filter(({ label }) => topicByLabel[label] !== null);
-    totalTagged += taggedVotes.length;
-    console.log(`${votes.length} votes, ${taggedVotes.length} tagged with a tracked topic`);
+    const taggedVotes = labeledVotes.filter(({ label }) => tagByLabel[label].topic !== null);
+    const relevantVotes = taggedVotes.filter(({ label }) => tagByLabel[label].relevance >= RELEVANCE_THRESHOLD);
+    totalTagged += relevantVotes.length;
+    console.log(
+      `${votes.length} votes, ${taggedVotes.length} tagged with a tracked topic, ` +
+        `${relevantVotes.length} relevant enough (>=${RELEVANCE_THRESHOLD}/10) to actually test`,
+    );
 
     // For each topically-tagged vote, find the most recent position on that topic
     // as of the vote date — a plain lookup, no AI needed for this part.
     const candidates: Array<{ label: string; voteId: string; topic: string; positionId: string; matchCandidate: MatchCandidate }> = [];
     let idx = 0;
-    for (const { label, vote } of taggedVotes) {
-      const topic = topicByLabel[label] as string;
+    for (const { label, vote } of relevantVotes) {
+      const topic = tagByLabel[label].topic as string;
       const { data: position, error: positionError } = await supabase
         .from("positions")
         .select("id, statement_text, stated_at")

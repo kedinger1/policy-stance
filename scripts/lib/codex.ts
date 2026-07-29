@@ -108,6 +108,7 @@ const TopicTagSchema = z.object({
     z.object({
       label: z.string(),
       topic: z.enum(TOPICS).nullable(),
+      relevance: z.number().int().min(1).max(10),
     }),
   ),
 });
@@ -122,8 +123,17 @@ const TOPIC_TAG_JSON_SCHEMA = {
         properties: {
           label: { type: "string" },
           topic: { type: ["string", "null"], enum: [...TOPICS, null] },
+          relevance: {
+            type: "integer",
+            description:
+              "1-10: how centrally this bill's actual subject matter tests the topic, not just whether it's " +
+              "tangentially themed around it. 10 = the bill's primary purpose is squarely this topic. " +
+              "1-3 = only nominally or symbolically related (e.g. a wildlife-awareness resolution is not a " +
+              "meaningful test of a climate-policy position, even though both could loosely be called " +
+              "'environment'). Use 1 for anything with no topic (topic is null).",
+          },
         },
-        required: ["label", "topic"],
+        required: ["label", "topic", "relevance"],
         additionalProperties: false,
       },
     },
@@ -133,21 +143,27 @@ const TOPIC_TAG_JSON_SCHEMA = {
 };
 
 export type VoteForTagging = { label: string; billTitle: string };
+export type TopicTag = { topic: string | null; relevance: number };
 
-// Classifies each bill title into one topic from the fixed taxonomy, or null if
-// it doesn't relate to any tracked topic (e.g. a commemorative highway naming).
-// No web search needed — this is pure reasoning over the title text.
-export function tagVoteTopics(voteList: VoteForTagging[]): Record<string, string | null> {
+// Classifies each bill title into one topic from the fixed taxonomy (or null), plus
+// a relevance score for how substantively — not just nominally — the bill tests that
+// topic. This is the filter that stops a symbolic/tangential bill (a wildlife-awareness
+// resolution) from being treated as a meaningful test of a climate-policy position just
+// because both share a broad topic label. No web search needed — pure reasoning over the title.
+export function tagVoteTopics(voteList: VoteForTagging[]): Record<string, TopicTag> {
   const itemsText = voteList.map((v) => `${v.label}: ${v.billTitle}`).join("\n");
   const topicList = TOPICS.join(", ");
   const prompt =
     `Classify each bill below into exactly one topic from this fixed list, or null if it doesn't clearly relate to any of them: ${topicList}. ` +
     `Ceremonial/commemorative bills (naming highways, recognizing individuals or events) and narrow technical/procedural bills should get null. ` +
+    `For every bill, also score relevance 1-10: how centrally the bill's actual substance tests that topic, not just whether it's thematically adjacent. ` +
+    `A bill that only nominally touches a topic (e.g. a wildlife-awareness resolution under "environment_climate") should score low relevance even though the topic label technically applies — ` +
+    `it is not a meaningful test of someone's climate-policy position. Reserve high relevance for bills whose primary purpose squarely addresses the topic. ` +
     `Respond with the final JSON result only, one entry per label, in the same order given.\n\n${itemsText}`;
 
   const raw = runCodexExec(prompt, TOPIC_TAG_JSON_SCHEMA, { webSearch: false });
   const parsed = TopicTagSchema.parse(raw);
-  return Object.fromEntries(parsed.results.map((r) => [r.label, r.topic]));
+  return Object.fromEntries(parsed.results.map((r) => [r.label, { topic: r.topic, relevance: r.relevance }]));
 }
 
 // --- Vote-to-position matching -------------------------------------------------
