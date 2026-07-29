@@ -61,7 +61,9 @@ export default async function Home() {
                 <div className="flex items-center gap-4 font-mono text-xs text-stone-500 dark:text-stone-500">
                   <span>{positionCount} positions</span>
                   <span>
-                    {summary.consistency === null ? "—" : `${Math.round(summary.consistency * 100)}% consistent`}
+                    {summary.consistency === null
+                      ? "—"
+                      : `${Math.round(summary.consistency * 100)}% consistent (n=${summary.scoreable})`}
                   </span>
                 </div>
               </Link>

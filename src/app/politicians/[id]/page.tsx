@@ -72,13 +72,12 @@ export default async function PoliticianPage({ params }: { params: Promise<{ id:
         member&apos;s own choice.
       </p>
 
-      <div className="mt-6 grid grid-cols-2 gap-px overflow-hidden rounded border border-stone-200 bg-stone-200 sm:grid-cols-4 dark:border-stone-800 dark:bg-stone-800">
+      <div className="mt-6 grid grid-cols-1 gap-px overflow-hidden rounded border border-stone-200 bg-stone-200 sm:grid-cols-3 dark:border-stone-800 dark:bg-stone-800">
         <Stat label="Total votes" value={String(totalVotes ?? 0)} />
         <Stat label="Matched to a position" value={String(matches.length)} />
-        <Stat label="Scoreable" value={String(summary.scoreable)} />
         <Stat
           label="Consistency"
-          value={summary.consistency === null ? "n/a" : `${Math.round(summary.consistency * 100)}%`}
+          value={summary.consistency === null ? "n/a" : `${Math.round(summary.consistency * 100)}% (n=${summary.scoreable})`}
         />
       </div>
       <p className="mt-2 font-mono text-xs text-stone-500">
