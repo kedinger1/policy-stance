@@ -12,7 +12,7 @@ async function throttle(): Promise<void> {
   lastRequestAt = Date.now();
 }
 
-async function openStatesGet<T>(pathAndQuery: string, retriesLeft = 3): Promise<T> {
+async function openStatesGet<T>(pathAndQuery: string, retriesLeft = 5): Promise<T> {
   await throttle();
   const res = await fetch(`${BASE_URL}${pathAndQuery}`, {
     headers: { "X-API-KEY": env.openStatesApiKey },
@@ -21,6 +21,13 @@ async function openStatesGet<T>(pathAndQuery: string, retriesLeft = 3): Promise<
     const retryAfterMs = Number(res.headers.get("retry-after")) * 1000 || 65_000;
     console.log(`Rate limited, waiting ${Math.round(retryAfterMs / 1000)}s before retrying...`);
     await new Promise((resolve) => setTimeout(resolve, retryAfterMs));
+    return openStatesGet<T>(pathAndQuery, retriesLeft - 1);
+  }
+  // 5xx (e.g. a transient 502) is the server's problem, not ours — worth a short
+  // retry rather than aborting an unattended multi-hour run over one hiccup.
+  if (res.status >= 500 && retriesLeft > 0) {
+    console.log(`Server error ${res.status}, retrying in 10s (${retriesLeft} attempt(s) left)...`);
+    await new Promise((resolve) => setTimeout(resolve, 10_000));
     return openStatesGet<T>(pathAndQuery, retriesLeft - 1);
   }
   if (!res.ok) {
