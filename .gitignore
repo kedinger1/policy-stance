@@ -43,3 +43,6 @@ next-env.d.ts
 
 # Local Netlify folder
 .netlify
+
+# Multi-day vote backfill progress (mutable run state, not code)
+.vote-backfill-state.json

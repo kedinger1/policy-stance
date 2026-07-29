@@ -94,3 +94,16 @@ export async function fetchRecentNyBillsWithVotes(maxPages = 5): Promise<OpenSta
   }
   return results;
 }
+
+// Single-page fetch for a specific legislative session, for resumable
+// multi-day backfills that must track exactly which page they left off on
+// (per_page is hard-capped at 20 by the API regardless of what's requested).
+export async function fetchBillsPageForSession(
+  session: string,
+  page: number,
+): Promise<{ bills: OpenStatesBill[]; maxPage: number }> {
+  const data = await openStatesGet<Paginated<OpenStatesBill>>(
+    `/bills?jurisdiction=New%20York&session=${session}&per_page=20&page=${page}&include=votes`,
+  );
+  return { bills: data.results, maxPage: data.pagination.max_page };
+}
