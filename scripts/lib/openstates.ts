@@ -12,11 +12,23 @@ async function throttle(): Promise<void> {
   lastRequestAt = Date.now();
 }
 
-async function openStatesGet<T>(pathAndQuery: string, retriesLeft = 5): Promise<T> {
+async function openStatesGet<T>(pathAndQuery: string, retriesLeft = 8): Promise<T> {
   await throttle();
-  const res = await fetch(`${BASE_URL}${pathAndQuery}`, {
-    headers: { "X-API-KEY": env.openStatesApiKey },
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${BASE_URL}${pathAndQuery}`, {
+      headers: { "X-API-KEY": env.openStatesApiKey },
+    });
+  } catch (err) {
+    // A rejected fetch (dropped connection, DNS blip, reset socket) is a network-level
+    // failure, not an HTTP status — needs its own retry path, not just the res.status checks below.
+    if (retriesLeft > 0) {
+      console.log(`Network error (${(err as Error).message}), retrying in 10s (${retriesLeft} attempt(s) left)...`);
+      await new Promise((resolve) => setTimeout(resolve, 10_000));
+      return openStatesGet<T>(pathAndQuery, retriesLeft - 1);
+    }
+    throw err;
+  }
   if (res.status === 429 && retriesLeft > 0) {
     const retryAfterMs = Number(res.headers.get("retry-after")) * 1000 || 65_000;
     console.log(`Rate limited, waiting ${Math.round(retryAfterMs / 1000)}s before retrying...`);
