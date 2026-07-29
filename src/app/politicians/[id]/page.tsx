@@ -66,6 +66,12 @@ export default async function PoliticianPage({ params }: { params: Promise<{ id:
         {politician.district ? ` · District ${politician.district}` : ""}
       </div>
 
+      <p className="mt-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+        These scores reflect votes that reached the floor. Legislative leadership (the Speaker, Majority Leader) largely
+        controls which bills get a vote — a lack of activity on a topic may reflect leadership blocking it, not this
+        member&apos;s own choice.
+      </p>
+
       <div className="mt-6 grid grid-cols-2 gap-px overflow-hidden rounded border border-stone-200 bg-stone-200 sm:grid-cols-4 dark:border-stone-800 dark:bg-stone-800">
         <Stat label="Total votes" value={String(totalVotes ?? 0)} />
         <Stat label="Matched to a position" value={String(matches.length)} />
