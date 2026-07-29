@@ -1,12 +1,13 @@
 import { supabase } from "./lib/supabase";
-import { fetchBillsPageForSession } from "./lib/openstates";
+import { fetchBillsPageForSession, DailyLimitExceededError } from "./lib/openstates";
 import { buildVoteRows } from "./lib/vote-rows";
 import { loadBackfillState, saveBackfillState } from "./lib/backfill-state";
 
-// Safety margin under OpenStates' 500 requests/day cap (a handful were already
-// spent today scoping this out). Re-run this script daily (or whenever
-// convenient) to continue — progress is saved after every page.
-const REQUEST_BUDGET_PER_RUN = 450;
+// Safety margin under OpenStates' actual daily cap, which turned out to be
+// 250/day, not the 500/day the dashboard displayed (learned the hard way from
+// a live 429). Re-run this script daily (or whenever convenient) to continue —
+// progress is saved after every page.
+const REQUEST_BUDGET_PER_RUN = 220;
 
 async function run() {
   const state = loadBackfillState();
@@ -75,6 +76,10 @@ async function run() {
 }
 
 run().catch((err) => {
+  if (err instanceof DailyLimitExceededError) {
+    console.log(`Hit today's OpenStates quota. Progress is saved — just re-run this script tomorrow to continue.`);
+    process.exit(0);
+  }
   console.error(err);
   process.exit(1);
 });

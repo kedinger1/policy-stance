@@ -12,6 +12,8 @@ async function throttle(): Promise<void> {
   lastRequestAt = Date.now();
 }
 
+export class DailyLimitExceededError extends Error {}
+
 async function openStatesGet<T>(pathAndQuery: string, retriesLeft = 8): Promise<T> {
   await throttle();
   let res: Response;
@@ -29,11 +31,20 @@ async function openStatesGet<T>(pathAndQuery: string, retriesLeft = 8): Promise<
     }
     throw err;
   }
-  if (res.status === 429 && retriesLeft > 0) {
-    const retryAfterMs = Number(res.headers.get("retry-after")) * 1000 || 65_000;
-    console.log(`Rate limited, waiting ${Math.round(retryAfterMs / 1000)}s before retrying...`);
-    await new Promise((resolve) => setTimeout(resolve, retryAfterMs));
-    return openStatesGet<T>(pathAndQuery, retriesLeft - 1);
+  if (res.status === 429) {
+    const body = await res.text();
+    // A per-minute rate limit is worth waiting out; a daily cap is not —
+    // retrying just burns more attempts (and possibly more quota) for nothing.
+    if (/per day|\/day/i.test(body)) {
+      throw new DailyLimitExceededError(body);
+    }
+    if (retriesLeft > 0) {
+      const retryAfterMs = Number(res.headers.get("retry-after")) * 1000 || 65_000;
+      console.log(`Rate limited, waiting ${Math.round(retryAfterMs / 1000)}s before retrying...`);
+      await new Promise((resolve) => setTimeout(resolve, retryAfterMs));
+      return openStatesGet<T>(pathAndQuery, retriesLeft - 1);
+    }
+    throw new Error(`OpenStates request failed (429): ${body}`);
   }
   // 5xx (e.g. a transient 502) is the server's problem, not ours — worth a short
   // retry rather than aborting an unattended multi-hour run over one hiccup.
