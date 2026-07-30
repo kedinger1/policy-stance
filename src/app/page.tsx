@@ -1,14 +1,10 @@
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { summarizeMatches } from "@/lib/scoring";
-import { TOPICS, formatTopicLabel } from "@/lib/topics";
+import { TOPICS } from "@/lib/topics";
+import { TopicPills } from "@/components/TopicPills";
 
 export const revalidate = 0;
-
-const PILL_BASE = "rounded-full border px-3 py-1 font-mono text-xs transition-colors";
-const PILL_ACTIVE = "border-teal-700 bg-teal-700 text-white dark:border-teal-400 dark:bg-teal-400 dark:text-stone-950";
-const PILL_INACTIVE =
-  "border-stone-300 text-stone-600 hover:border-teal-700 hover:text-teal-700 dark:border-stone-700 dark:text-stone-400";
 
 export default async function Home({ searchParams }: { searchParams: Promise<{ topic?: string }> }) {
   const { topic } = await searchParams;
@@ -63,22 +59,15 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ t
         underlying quotes, sources, and rationale behind each score.
       </p>
 
-      <div className="mt-6 flex flex-wrap gap-2">
-        <Link href="/" className={`${PILL_BASE} ${activeTopic === null ? PILL_ACTIVE : PILL_INACTIVE}`}>
-          All
-        </Link>
-        {TOPICS.map((t) => (
-          <Link key={t} href={`/?topic=${t}`} className={`${PILL_BASE} ${activeTopic === t ? PILL_ACTIVE : PILL_INACTIVE}`}>
-            {formatTopicLabel(t)}
-          </Link>
-        ))}
+      <div className="mt-6">
+        <TopicPills activeTopic={activeTopic} basePath="/" />
       </div>
 
       <ul className="mt-8 divide-y divide-stone-200 dark:divide-stone-800">
         {sortedRows.map(({ politician, positionCount, summary }) => (
           <li key={politician.id}>
             <Link
-              href={`/politicians/${politician.id}`}
+              href={activeTopic ? `/politicians/${politician.id}?topic=${activeTopic}` : `/politicians/${politician.id}`}
               className="flex items-center justify-between gap-4 py-4 transition-colors hover:bg-stone-50 dark:hover:bg-stone-900"
             >
               <div>

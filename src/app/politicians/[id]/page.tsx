@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { summarizeMatches, type Classification } from "@/lib/scoring";
+import { TOPICS, formatTopicLabel } from "@/lib/topics";
+import { TopicPills } from "@/components/TopicPills";
 
 export const revalidate = 0;
 
@@ -12,8 +14,16 @@ const CLASSIFICATION_STYLE: Record<Classification, string> = {
   na: "bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-400",
 };
 
-export default async function PoliticianPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function PoliticianPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ topic?: string }>;
+}) {
   const { id } = await params;
+  const { topic } = await searchParams;
+  const activeTopic = topic && (TOPICS as readonly string[]).includes(topic) ? topic : null;
 
   const { data: politician, error: pError } = await supabase
     .from("politicians")
@@ -29,21 +39,21 @@ export default async function PoliticianPage({ params }: { params: Promise<{ id:
     .eq("politician_id", id);
   if (voteCountError) throw voteCountError;
 
-  const { data: positions, error: posError } = await supabase
+  const { data: allPositions, error: posError } = await supabase
     .from("positions")
     .select("id, topic, statement_text, source_type, source_url, stated_at, extraction_confidence")
     .eq("politician_id", id)
     .order("stated_at", { ascending: false });
   if (posError) throw posError;
 
-  const { data: matches, error: matchError } = await supabase
+  const { data: allMatches, error: matchError } = await supabase
     .from("matches")
     .select("id, topic, classification, rationale, confidence, status, position_id, vote_id")
     .eq("politician_id", id)
     .order("confidence", { ascending: true });
   if (matchError) throw matchError;
 
-  const voteIds = [...new Set(matches.map((m) => m.vote_id))];
+  const voteIds = [...new Set(allMatches.map((m) => m.vote_id))];
   const { data: votes, error: votesFetchError } = await supabase
     .from("votes")
     .select("id, bill_title, vote_value, voted_at")
@@ -51,7 +61,10 @@ export default async function PoliticianPage({ params }: { params: Promise<{ id:
   if (votesFetchError) throw votesFetchError;
 
   const votesById = new Map(votes.map((v) => [v.id, v]));
-  const positionsById = new Map(positions.map((p) => [p.id, p]));
+  const positionsById = new Map(allPositions.map((p) => [p.id, p]));
+
+  const positions = activeTopic ? allPositions.filter((p) => p.topic === activeTopic) : allPositions;
+  const matches = activeTopic ? allMatches.filter((m) => m.topic === activeTopic) : allMatches;
   const summary = summarizeMatches(matches);
 
   return (
@@ -72,7 +85,16 @@ export default async function PoliticianPage({ params }: { params: Promise<{ id:
         member&apos;s own choice.
       </p>
 
-      <div className="mt-6 grid grid-cols-1 gap-px overflow-hidden rounded border border-stone-200 bg-stone-200 sm:grid-cols-3 dark:border-stone-800 dark:bg-stone-800">
+      <div className="mt-6">
+        <TopicPills activeTopic={activeTopic} basePath={`/politicians/${id}`} />
+      </div>
+      {activeTopic && (
+        <p className="mt-2 font-mono text-xs text-stone-500">
+          Showing: {formatTopicLabel(activeTopic)} only — total votes below is still this member&apos;s overall count.
+        </p>
+      )}
+
+      <div className="mt-4 grid grid-cols-1 gap-px overflow-hidden rounded border border-stone-200 bg-stone-200 sm:grid-cols-3 dark:border-stone-800 dark:bg-stone-800">
         <Stat label="Total votes" value={String(totalVotes ?? 0)} />
         <Stat label="Matched to a position" value={String(matches.length)} />
         <Stat
