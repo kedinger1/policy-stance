@@ -16,6 +16,7 @@ Backlog to pull from — not ordered by priority beyond the rough grouping below
 - [ ] If the relevance filter alone doesn't fully solve match precision, consider sub-topic/issue tags nested under each of the 11 broad topics.
 - [ ] Voter interviews before building personalization features — a friend has offered to help conduct these and has a template in progress.
 - [ ] Topic-priority weighting / personalized ranking (let a voter weight which topics matter most to them, surface relevant politicians/positions accordingly) — sequence after interviews, not before.
+- [ ] Search icon/box to find a politician by name on the list page. Alphabetical ordering is fine at the current pilot scale, but won't hold up once this scales toward all 213 (or beyond, to other states).
 
 ## Later / exploratory
 
