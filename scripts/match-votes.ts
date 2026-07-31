@@ -1,5 +1,6 @@
 import { supabase } from "./lib/supabase";
 import { tagVoteTopics, classifyMatches, type MatchCandidate } from "./lib/codex";
+import { withRetry } from "./lib/retry";
 
 // Below this confidence, a match still gets recorded but flagged for human review
 // rather than auto-published.
@@ -24,8 +25,11 @@ function chunk<T>(items: T[], size: number): T[][] {
 }
 
 async function run() {
-  const { data: politicianIdsWithPositions, error: posError } = await supabase.from("positions").select("politician_id");
-  if (posError) throw posError;
+  const politicianIdsWithPositions = await withRetry(async () => {
+    const { data, error } = await supabase.from("positions").select("politician_id");
+    if (error) throw error;
+    return data;
+  });
   const withPositions = [...new Set(politicianIdsWithPositions.map((r) => r.politician_id))];
 
   // Votes is a large table (9,730+ rows) — fetching every row just to find distinct
@@ -33,16 +37,19 @@ async function run() {
   // Check per-politician instead, same safe pattern as check-vote-scope.ts.
   const targetIds: string[] = [];
   for (const id of withPositions) {
-    const { count, error: voteCountError } = await supabase
-      .from("votes")
-      .select("*", { count: "exact", head: true })
-      .eq("politician_id", id);
-    if (voteCountError) throw voteCountError;
+    const count = await withRetry(async () => {
+      const { count, error } = await supabase.from("votes").select("*", { count: "exact", head: true }).eq("politician_id", id);
+      if (error) throw error;
+      return count;
+    });
     if (count && count > 0) targetIds.push(id);
   }
 
-  const { data: politicians, error: pError } = await supabase.from("politicians").select("id, full_name").in("id", targetIds);
-  if (pError) throw pError;
+  const politicians = await withRetry(async () => {
+    const { data, error } = await supabase.from("politicians").select("id, full_name").in("id", targetIds);
+    if (error) throw error;
+    return data;
+  });
 
   let totalVotes = 0;
   let totalTagged = 0;
@@ -50,13 +57,16 @@ async function run() {
 
   for (const politician of politicians) {
     console.log(`\n=== ${politician.full_name} ===`);
-    const { data: votes, error: votesError } = await supabase
-      .from("votes")
-      .select("id, bill_title, vote_value, voted_at")
-      .eq("politician_id", politician.id)
-      .order("voted_at", { ascending: false })
-      .limit(VOTE_CAP_PER_POLITICIAN);
-    if (votesError) throw votesError;
+    const votes = await withRetry(async () => {
+      const { data, error } = await supabase
+        .from("votes")
+        .select("id, bill_title, vote_value, voted_at")
+        .eq("politician_id", politician.id)
+        .order("voted_at", { ascending: false })
+        .limit(VOTE_CAP_PER_POLITICIAN);
+      if (error) throw error;
+      return data;
+    });
     totalVotes += votes.length;
 
     const labeledVotes = votes.map((v, i) => ({ label: `v${i}`, billTitle: v.bill_title, vote: v }));
@@ -78,11 +88,14 @@ async function run() {
     // for every candidate — a relevantVotes.length round-trip to Supabase per
     // vote (hundreds, now that votes are capped at 1,000/politician instead of
     // ~46) is both slow and fragile to any single transient network hiccup.
-    const { data: politicianPositions, error: positionsError } = await supabase
-      .from("positions")
-      .select("id, topic, statement_text, stated_at")
-      .eq("politician_id", politician.id);
-    if (positionsError) throw positionsError;
+    const politicianPositions = await withRetry(async () => {
+      const { data, error } = await supabase
+        .from("positions")
+        .select("id, topic, statement_text, stated_at")
+        .eq("politician_id", politician.id);
+      if (error) throw error;
+      return data;
+    });
 
     const positionsByTopic = new Map<string, { id: string; statement_text: string; stated_at: string }[]>();
     for (const p of politicianPositions) {
@@ -123,7 +136,10 @@ async function run() {
     totalMatched += candidates.length;
 
     if (candidates.length === 0) {
-      await supabase.from("matches").delete().eq("politician_id", politician.id);
+      await withRetry(async () => {
+        const { error } = await supabase.from("matches").delete().eq("politician_id", politician.id);
+        if (error) throw error;
+      });
       continue;
     }
 
@@ -147,11 +163,15 @@ async function run() {
       };
     });
 
-    const { error: deleteError } = await supabase.from("matches").delete().eq("politician_id", politician.id);
-    if (deleteError) throw deleteError;
+    await withRetry(async () => {
+      const { error } = await supabase.from("matches").delete().eq("politician_id", politician.id);
+      if (error) throw error;
+    });
 
-    const { error: insertError } = await supabase.from("matches").insert(rows);
-    if (insertError) throw insertError;
+    await withRetry(async () => {
+      const { error } = await supabase.from("matches").insert(rows);
+      if (error) throw error;
+    });
     console.log(`Inserted ${rows.length} matches for ${politician.full_name}`);
   }
 
