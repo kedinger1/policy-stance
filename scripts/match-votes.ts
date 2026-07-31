@@ -9,6 +9,20 @@ const CONFIDENCE_THRESHOLD = 0.75;
 // to be a meaningful test of a position — excluded before it ever reaches judgment.
 const RELEVANCE_THRESHOLD = 6;
 
+// With years of history now loaded (some politicians have 15,000+ votes), cap how
+// far back we look per politician and chunk every Codex call — one prompt with
+// thousands of bill titles isn't workable. Recent votes are also the ones most
+// likely to have a matching position anyway, since position data skews recent.
+const VOTE_CAP_PER_POLITICIAN = 1000;
+const TAG_BATCH_SIZE = 300;
+const CLASSIFY_BATCH_SIZE = 50;
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
+  return chunks;
+}
+
 async function run() {
   const { data: politicianIdsWithPositions, error: posError } = await supabase.from("positions").select("politician_id");
   if (posError) throw posError;
@@ -39,12 +53,17 @@ async function run() {
     const { data: votes, error: votesError } = await supabase
       .from("votes")
       .select("id, bill_title, vote_value, voted_at")
-      .eq("politician_id", politician.id);
+      .eq("politician_id", politician.id)
+      .order("voted_at", { ascending: false })
+      .limit(VOTE_CAP_PER_POLITICIAN);
     if (votesError) throw votesError;
     totalVotes += votes.length;
 
     const labeledVotes = votes.map((v, i) => ({ label: `v${i}`, billTitle: v.bill_title, vote: v }));
-    const tagByLabel = tagVoteTopics(labeledVotes.map(({ label, billTitle }) => ({ label, billTitle })));
+    const tagByLabel: Record<string, { topic: string | null; relevance: number }> = {};
+    for (const batch of chunk(labeledVotes, TAG_BATCH_SIZE)) {
+      Object.assign(tagByLabel, tagVoteTopics(batch.map(({ label, billTitle }) => ({ label, billTitle }))));
+    }
 
     const taggedVotes = labeledVotes.filter(({ label }) => tagByLabel[label].topic !== null);
     const relevantVotes = taggedVotes.filter(({ label }) => tagByLabel[label].relevance >= RELEVANCE_THRESHOLD);
@@ -96,7 +115,10 @@ async function run() {
       continue;
     }
 
-    const judgments = classifyMatches(candidates.map((c) => c.matchCandidate));
+    const judgments: Record<string, Awaited<ReturnType<typeof classifyMatches>>[string]> = {};
+    for (const batch of chunk(candidates, CLASSIFY_BATCH_SIZE)) {
+      Object.assign(judgments, classifyMatches(batch.map((c) => c.matchCandidate)));
+    }
 
     const rows = candidates.map((c) => {
       const judgment = judgments[c.label];
