@@ -1,14 +1,22 @@
 import { supabase } from "./lib/supabase";
 
-async function run() {
-  const { data: counts, error: countError } = await supabase.from("matches").select("classification, status");
-  if (countError) throw countError;
+async function exactCount(column: "classification" | "status", value: string): Promise<number> {
+  const { count, error } = await supabase.from("matches").select("*", { count: "exact", head: true }).eq(column, value);
+  if (error) throw error;
+  return count ?? 0;
+}
 
+async function run() {
+  // A plain unfiltered select silently truncates at PostgREST's default row cap
+  // (bit us once already with the votes table) -- use exact per-value counts instead.
   const byClassification: Record<string, number> = {};
+  for (const c of ["kept", "broken", "partial", "na"]) {
+    byClassification[c] = await exactCount("classification", c);
+  }
   const byStatus: Record<string, number> = {};
-  for (const row of counts) {
-    byClassification[row.classification] = (byClassification[row.classification] ?? 0) + 1;
-    byStatus[row.status] = (byStatus[row.status] ?? 0) + 1;
+  for (const s of ["ai_matched", "needs_review", "human_confirmed", "human_overridden", "community_flagged", "disputed"]) {
+    const n = await exactCount("status", s);
+    if (n > 0) byStatus[s] = n;
   }
   console.log("By classification:", byClassification);
   console.log("By status:", byStatus);
