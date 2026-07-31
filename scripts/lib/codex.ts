@@ -88,7 +88,7 @@ export function researchPositionsViaCodex(politicianName: string, chamber: strin
   const prompt =
     `Research public statements and stated positions from ${politicianName}, a ${chamber} member in ${state}, ` +
     `on each of these policy topics: ${topicList}. ` +
-    `Search official press releases, official legislative website statements, official social media, and news coverage quoting them directly. ` +
+    `Search official press releases, official legislative website statements, official social media, news coverage quoting them directly, and OnTheIssues.org (ontheissues.org), which compiles dated position quotes by topic. ` +
     `For each position found, record: topic, what they said (their own words or a close paraphrase), the exact date the statement was made or published, and the source URL. ` +
     `A specific date is required — an article publish date, a press release date, a speech date, a social media post's timestamp. ` +
     `Generic biographical or "about me" page content that isn't tied to a specific date is NOT a position statement — leave it out entirely rather than guessing a date for it. ` +

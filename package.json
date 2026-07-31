@@ -11,7 +11,8 @@
     "ingest:votes": "tsx scripts/ingest-votes.ts",
     "ingest:positions": "tsx scripts/ingest-positions.ts",
     "backfill:votes": "tsx scripts/backfill-votes.ts",
-    "ingest:votes:bulk": "tsx scripts/ingest-votes-bulk.ts"
+    "ingest:votes:bulk": "tsx scripts/ingest-votes-bulk.ts",
+    "rescan:positions": "tsx scripts/rescan-positions.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
