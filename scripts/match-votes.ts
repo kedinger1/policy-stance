@@ -73,22 +73,34 @@ async function run() {
         `${relevantVotes.length} relevant enough (>=${RELEVANCE_THRESHOLD}/10) to actually test`,
     );
 
-    // For each topically-tagged vote, find the most recent position on that topic
-    // as of the vote date — a plain lookup, no AI needed for this part.
+    // Fetch this politician's positions once and index by topic (sorted newest
+    // first), then look up "most recent position as of the vote date" in memory
+    // for every candidate — a relevantVotes.length round-trip to Supabase per
+    // vote (hundreds, now that votes are capped at 1,000/politician instead of
+    // ~46) is both slow and fragile to any single transient network hiccup.
+    const { data: politicianPositions, error: positionsError } = await supabase
+      .from("positions")
+      .select("id, topic, statement_text, stated_at")
+      .eq("politician_id", politician.id);
+    if (positionsError) throw positionsError;
+
+    const positionsByTopic = new Map<string, { id: string; statement_text: string; stated_at: string }[]>();
+    for (const p of politicianPositions) {
+      const list = positionsByTopic.get(p.topic) ?? [];
+      list.push(p);
+      positionsByTopic.set(p.topic, list);
+    }
+    for (const list of positionsByTopic.values()) list.sort((a, b) => (a.stated_at < b.stated_at ? 1 : -1));
+
+    function findPositionAsOf(topic: string, voteDate: string) {
+      return positionsByTopic.get(topic)?.find((p) => p.stated_at <= voteDate);
+    }
+
     const candidates: Array<{ label: string; voteId: string; topic: string; positionId: string; matchCandidate: MatchCandidate }> = [];
     let idx = 0;
     for (const { label, vote } of relevantVotes) {
       const topic = tagByLabel[label].topic as string;
-      const { data: position, error: positionError } = await supabase
-        .from("positions")
-        .select("id, statement_text, stated_at")
-        .eq("politician_id", politician.id)
-        .eq("topic", topic)
-        .lte("stated_at", vote.voted_at)
-        .order("stated_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (positionError) throw positionError;
+      const position = findPositionAsOf(topic, vote.voted_at);
       if (!position) continue;
 
       const matchLabel = `m${idx++}`;
