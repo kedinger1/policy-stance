@@ -10,11 +10,14 @@
     "ingest:politicians": "tsx scripts/ingest-politicians.ts",
     "ingest:votes": "tsx scripts/ingest-votes.ts",
     "ingest:positions": "tsx scripts/ingest-positions.ts",
-    "backfill:votes": "tsx scripts/backfill-votes.ts"
+    "backfill:votes": "tsx scripts/backfill-votes.ts",
+    "ingest:votes:bulk": "tsx scripts/ingest-votes-bulk.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",
     "@supabase/supabase-js": "^2.110.9",
+    "adm-zip": "^0.6.0",
+    "csv-parse": "^7.0.1",
     "dotenv": "^17.4.2",
     "next": "16.2.12",
     "react": "19.2.4",
@@ -23,6 +26,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/adm-zip": "^0.5.8",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
