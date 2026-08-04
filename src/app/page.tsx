@@ -1,11 +1,13 @@
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
-import { summarizeMatches } from "@/lib/scoring";
+import { summarizeMatches, type Classification } from "@/lib/scoring";
 import { TOPICS } from "@/lib/topics";
 import { TopicPills } from "@/components/TopicPills";
 import { Avatar } from "@/components/Avatar";
 
-export const revalidate = 0;
+// Data only changes when a pipeline script is run manually, not on every visit —
+// cache the render for an hour instead of re-querying on every request.
+export const revalidate = 3600;
 
 export default async function Home({ searchParams }: { searchParams: Promise<{ topic?: string }> }) {
   const { topic } = await searchParams;
@@ -28,11 +30,20 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ t
     .in("politician_id", researchedIds);
   if (allPosError) throw allPosError;
 
-  const { data: allMatches, error: allMatchError } = await supabase
-    .from("matches")
-    .select("politician_id, classification, topic")
-    .in("politician_id", researchedIds);
-  if (allMatchError) throw allMatchError;
+  // Paginated to avoid PostgREST's silent 1000-row cap on unfiltered selects —
+  // total match count across all politicians easily exceeds that.
+  const allMatches: { politician_id: string; classification: Classification; topic: string }[] = [];
+  const PAGE_SIZE = 1000;
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data: page, error: allMatchError } = await supabase
+      .from("matches")
+      .select("politician_id, classification, topic")
+      .in("politician_id", researchedIds)
+      .range(from, from + PAGE_SIZE - 1);
+    if (allMatchError) throw allMatchError;
+    allMatches.push(...page);
+    if (page.length < PAGE_SIZE) break;
+  }
 
   const rows = politicians.map((politician) => {
     const positions = allPositions.filter((p) => p.politician_id === politician.id);

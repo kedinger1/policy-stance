@@ -6,7 +6,9 @@ import { TOPICS, formatTopicLabel } from "@/lib/topics";
 import { TopicPills } from "@/components/TopicPills";
 import { Avatar } from "@/components/Avatar";
 
-export const revalidate = 0;
+// Data only changes when a pipeline script is run manually, not on every visit —
+// cache the render for an hour instead of re-querying on every request.
+export const revalidate = 3600;
 
 const CLASSIFICATION_STYLE: Record<Classification, string> = {
   kept: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
