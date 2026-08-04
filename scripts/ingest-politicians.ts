@@ -1,5 +1,5 @@
 import { supabase } from "./lib/supabase";
-import { fetchNyLegislators, type OrgClassification } from "./lib/openstates";
+import { fetchNyLegislators, normalizePhotoUrl, type OrgClassification } from "./lib/openstates";
 
 async function run() {
   const chambers: OrgClassification[] = ["upper", "lower"];
@@ -14,7 +14,7 @@ async function run() {
       chamber,
       district: person.current_role?.district ?? null,
       openstates_id: person.id,
-      photo_url: person.image ?? null,
+      photo_url: normalizePhotoUrl(person.image),
     }));
 
     const { error } = await supabase.from("politicians").upsert(rows, { onConflict: "openstates_id" });

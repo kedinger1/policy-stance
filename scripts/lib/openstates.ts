@@ -77,6 +77,14 @@ export type OpenStatesPerson = {
   } | null;
 };
 
+// Drupal sites (e.g. nysenate.gov) sometimes hand out an image-style derivative
+// URL that was never actually rendered server-side, so it 404s — the original
+// unprocessed file at the same path minus the style segment reliably works.
+export function normalizePhotoUrl(url: string | null): string | null {
+  if (!url) return null;
+  return url.replace(/\/sites\/default\/files\/styles\/[^/]+\/public\//, "/sites/default/files/");
+}
+
 export async function fetchNyLegislators(orgClassification: OrgClassification): Promise<OpenStatesPerson[]> {
   const results: OpenStatesPerson[] = [];
   let page = 1;
