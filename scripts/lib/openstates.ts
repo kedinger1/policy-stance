@@ -69,6 +69,7 @@ export type OrgClassification = "upper" | "lower";
 export type OpenStatesPerson = {
   id: string;
   name: string;
+  image: string | null;
   current_role: {
     title: string;
     org_classification: OrgClassification;

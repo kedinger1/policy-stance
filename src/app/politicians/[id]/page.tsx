@@ -4,6 +4,7 @@ import { supabase } from "@/lib/supabase";
 import { summarizeMatches, type Classification } from "@/lib/scoring";
 import { TOPICS, formatTopicLabel } from "@/lib/topics";
 import { TopicPills } from "@/components/TopicPills";
+import { Avatar } from "@/components/Avatar";
 
 export const revalidate = 0;
 
@@ -27,7 +28,7 @@ export default async function PoliticianPage({
 
   const { data: politician, error: pError } = await supabase
     .from("politicians")
-    .select("id, full_name, chamber, state, district")
+    .select("id, full_name, chamber, state, district, photo_url")
     .eq("id", id)
     .maybeSingle();
   if (pError) throw pError;
@@ -73,10 +74,15 @@ export default async function PoliticianPage({
         ← all politicians
       </Link>
 
-      <h1 className="mt-2 text-2xl font-semibold tracking-tight text-stone-900 dark:text-stone-50">{politician.full_name}</h1>
-      <div className="font-mono text-xs text-stone-500">
-        {politician.state} · {politician.chamber}
-        {politician.district ? ` · District ${politician.district}` : ""}
+      <div className="mt-2 flex items-center gap-4">
+        <Avatar src={politician.photo_url} name={politician.full_name} size={64} />
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-stone-900 dark:text-stone-50">{politician.full_name}</h1>
+          <div className="font-mono text-xs text-stone-500">
+            {politician.state} · {politician.chamber}
+            {politician.district ? ` · District ${politician.district}` : ""}
+          </div>
+        </div>
       </div>
 
       <p className="mt-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">

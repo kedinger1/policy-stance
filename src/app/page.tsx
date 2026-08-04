@@ -3,6 +3,7 @@ import { supabase } from "@/lib/supabase";
 import { summarizeMatches } from "@/lib/scoring";
 import { TOPICS } from "@/lib/topics";
 import { TopicPills } from "@/components/TopicPills";
+import { Avatar } from "@/components/Avatar";
 
 export const revalidate = 0;
 
@@ -16,7 +17,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ t
 
   const { data: politicians, error: pError } = await supabase
     .from("politicians")
-    .select("id, full_name, chamber, state, district")
+    .select("id, full_name, chamber, state, district, photo_url")
     .in("id", researchedIds)
     .order("full_name");
   if (pError) throw pError;
@@ -70,11 +71,14 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ t
               href={activeTopic ? `/politicians/${politician.id}?topic=${activeTopic}` : `/politicians/${politician.id}`}
               className="flex items-center justify-between gap-4 py-4 transition-colors hover:bg-stone-50 dark:hover:bg-stone-900"
             >
-              <div>
-                <div className="font-medium text-stone-900 dark:text-stone-50">{politician.full_name}</div>
-                <div className="font-mono text-xs text-stone-500 dark:text-stone-500">
-                  {politician.state} · {politician.chamber}
-                  {politician.district ? ` · District ${politician.district}` : ""}
+              <div className="flex items-center gap-3">
+                <Avatar src={politician.photo_url} name={politician.full_name} />
+                <div>
+                  <div className="font-medium text-stone-900 dark:text-stone-50">{politician.full_name}</div>
+                  <div className="font-mono text-xs text-stone-500 dark:text-stone-500">
+                    {politician.state} · {politician.chamber}
+                    {politician.district ? ` · District ${politician.district}` : ""}
+                  </div>
                 </div>
               </div>
               <div className="flex items-center gap-4 font-mono text-xs text-stone-500 dark:text-stone-500">

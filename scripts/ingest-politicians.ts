@@ -14,6 +14,7 @@ async function run() {
       chamber,
       district: person.current_role?.district ?? null,
       openstates_id: person.id,
+      photo_url: person.image ?? null,
     }));
 
     const { error } = await supabase.from("politicians").upsert(rows, { onConflict: "openstates_id" });
