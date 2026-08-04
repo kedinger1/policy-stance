@@ -6,8 +6,7 @@ Backlog to pull from — not ordered by priority beyond the rough grouping below
 
 - [x] Expand vote history further back than the original snapshot — done via bulk CSV loading (`scripts/ingest-votes-bulk.ts`) direct from OpenStates' public data export, covering all NY sessions back to 2019-2020. `ingest-votes.ts` (the live API poller) stays in use for day-to-day top-ups on the still-open current session between OpenStates' monthly bulk refreshes.
 - [ ] Scale the position + vote + matching pipeline from the current pilot (~26 politicians) to all 213 NY state legislators.
-- [ ] Federal vote ingestion (e.g. ProPublica Congress API) so featured federal politicians (AOC) can actually be scored — right now they have positions but no votes to match against.
-- [x] Add a headshot photo URL to the politicians table/UI — done. `photo_url` column populated from OpenStates' `/people` `image` field via `ingest-politicians.ts` (213/214 politicians have one; AOC, federal, is the one exception), rendered via a new `Avatar` component on both the list and detail pages.
+- [x] Add a headshot photo URL to the politicians table/UI — done. `photo_url` column populated from OpenStates' `/people` `image` field via `ingest-politicians.ts` (213/214 NY state legislators have one), rendered via a new `Avatar` component on both the list and detail pages.
 
 ## Methodology / product
 
