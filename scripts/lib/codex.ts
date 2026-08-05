@@ -224,8 +224,9 @@ export function classifyMatches(items: MatchCandidate[]): Record<string, Omit<Ma
   const prompt =
     `For each item below, judge whether the vote is consistent with the politician's earlier stated position on the same topic. ` +
     `Classify as "kept" (vote clearly matches the stated position), "broken" (vote clearly contradicts it), ` +
-    `"partial" (the bill is bundled/omnibus, or the vote is a defensible tradeoff that doesn't cleanly match or contradict — explain the tradeoff in the rationale), ` +
-    `or "na" (the vote and position aren't actually about the same thing closely enough to judge). ` +
+    `"partial" (only when the bill is bundled/omnibus and mixes provisions for and against the position, or the vote is a genuine, explainable tradeoff on the exact same specific question the position addresses), ` +
+    `or "na" (the vote addresses a different, more specific, or more tangential question than the position does — even if it shares the same broad topic — or the two simply aren't close enough to judge). ` +
+    `Default to "na" rather than "partial" whenever you're only uncertain the bill and position are about the same specific issue; reserve "partial" for when you can point to real, opposing considerations within that same issue. ` +
     `Write a one-to-two sentence rationale citing the specific vote and position. Give a confidence score from 0 to 1. ` +
     `Respond with the final JSON result only, one entry per label.\n\n${itemsText}`;
 

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
-import { summarizeMatches, type Classification } from "@/lib/scoring";
+import { summarizeMatches, type Classification, type ReviewStatus } from "@/lib/scoring";
 import { TOPICS } from "@/lib/topics";
 import { TopicPills } from "@/components/TopicPills";
 import { Avatar } from "@/components/Avatar";
@@ -32,12 +32,12 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ t
 
   // Paginated to avoid PostgREST's silent 1000-row cap on unfiltered selects —
   // total match count across all politicians easily exceeds that.
-  const allMatches: { politician_id: string; classification: Classification; topic: string }[] = [];
+  const allMatches: { politician_id: string; classification: Classification; topic: string; status: ReviewStatus }[] = [];
   const PAGE_SIZE = 1000;
   for (let from = 0; ; from += PAGE_SIZE) {
     const { data: page, error: allMatchError } = await supabase
       .from("matches")
-      .select("politician_id, classification, topic")
+      .select("politician_id, classification, topic, status")
       .in("politician_id", researchedIds)
       .range(from, from + PAGE_SIZE - 1);
     if (allMatchError) throw allMatchError;
