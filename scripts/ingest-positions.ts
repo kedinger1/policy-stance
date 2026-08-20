@@ -1,4 +1,4 @@
-import { supabase } from "./lib/supabase";
+import { supabase, fetchAllRows } from "./lib/supabase";
 import { researchPositionsViaCodex } from "./lib/codex";
 
 // How many additional politicians (beyond ones already researched) to process this run.
@@ -7,8 +7,7 @@ const BATCH_SIZE = 10;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 async function run() {
-  const { data: existing, error: existingError } = await supabase.from("positions").select("politician_id");
-  if (existingError) throw existingError;
+  const existing = await fetchAllRows((from, to) => supabase.from("positions").select("politician_id").range(from, to));
   const alreadyResearched = [...new Set(existing.map((row) => row.politician_id))];
 
   let query = supabase.from("politicians").select("id, full_name, chamber, state").order("full_name").limit(BATCH_SIZE);

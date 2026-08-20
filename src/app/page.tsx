@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { supabase } from "@/lib/supabase";
+import { supabase, fetchAllRows } from "@/lib/supabase";
 import { summarizeMatches, type Classification, type ReviewStatus } from "@/lib/scoring";
 import { TOPICS } from "@/lib/topics";
 import { TopicPills } from "@/components/TopicPills";
@@ -13,8 +13,12 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ t
   const { topic } = await searchParams;
   const activeTopic = topic && (TOPICS as readonly string[]).includes(topic) ? topic : null;
 
-  const { data: positionRows, error: posError } = await supabase.from("positions").select("politician_id");
-  if (posError) throw posError;
+  // Every query here is paginated via fetchAllRows to avoid PostgREST's silent
+  // 1000-row cap on unfiltered/unpaginated selects — positions alone crossed
+  // that line once bill-sponsorship data landed, and matches crossed it earlier.
+  const positionRows = await fetchAllRows((from, to) =>
+    supabase.from("positions").select("politician_id").range(from, to),
+  );
   const researchedIds = [...new Set(positionRows.map((r) => r.politician_id))];
 
   const { data: politicians, error: pError } = await supabase
@@ -24,26 +28,14 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ t
     .order("full_name");
   if (pError) throw pError;
 
-  const { data: allPositions, error: allPosError } = await supabase
-    .from("positions")
-    .select("politician_id, topic")
-    .in("politician_id", researchedIds);
-  if (allPosError) throw allPosError;
+  const allPositions = await fetchAllRows((from, to) =>
+    supabase.from("positions").select("politician_id, topic").in("politician_id", researchedIds).range(from, to),
+  );
 
-  // Paginated to avoid PostgREST's silent 1000-row cap on unfiltered selects —
-  // total match count across all politicians easily exceeds that.
-  const allMatches: { politician_id: string; classification: Classification; topic: string; status: ReviewStatus }[] = [];
-  const PAGE_SIZE = 1000;
-  for (let from = 0; ; from += PAGE_SIZE) {
-    const { data: page, error: allMatchError } = await supabase
-      .from("matches")
-      .select("politician_id, classification, topic, status")
-      .in("politician_id", researchedIds)
-      .range(from, from + PAGE_SIZE - 1);
-    if (allMatchError) throw allMatchError;
-    allMatches.push(...page);
-    if (page.length < PAGE_SIZE) break;
-  }
+  const allMatches = await fetchAllRows<{ politician_id: string; classification: Classification; topic: string; status: ReviewStatus }>(
+    (from, to) =>
+      supabase.from("matches").select("politician_id, classification, topic, status").in("politician_id", researchedIds).range(from, to),
+  );
 
   const rows = politicians.map((politician) => {
     const positions = allPositions.filter((p) => p.politician_id === politician.id);

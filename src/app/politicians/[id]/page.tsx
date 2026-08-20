@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { supabase } from "@/lib/supabase";
+import { supabase, fetchRowsForIds } from "@/lib/supabase";
 import { summarizeMatches, type Classification, type ReviewStatus } from "@/lib/scoring";
 import { TOPICS, formatTopicLabel } from "@/lib/topics";
 import { TopicPills } from "@/components/TopicPills";
@@ -90,12 +90,17 @@ export default async function PoliticianPage({
     .order("confidence", { ascending: true });
   if (matchError) throw matchError;
 
+  const { data: topicStances, error: stanceError } = await supabase
+    .from("topic_stances")
+    .select("topic, summary")
+    .eq("politician_id", id);
+  if (stanceError) throw stanceError;
+  const stanceByTopic = new Map(topicStances.map((s) => [s.topic, s.summary]));
+
   const voteIds = [...new Set(allMatches.map((m) => m.vote_id))];
-  const { data: votes, error: votesFetchError } = await supabase
-    .from("votes")
-    .select("id, bill_title, vote_value, voted_at")
-    .in("id", voteIds.length > 0 ? voteIds : ["00000000-0000-0000-0000-000000000000"]);
-  if (votesFetchError) throw votesFetchError;
+  const votes = await fetchRowsForIds(voteIds, (chunk) =>
+    supabase.from("votes").select("id, bill_title, vote_value, voted_at").in("id", chunk),
+  );
 
   const votesById = new Map(votes.map((v) => [v.id, v]));
   const positionsById = new Map<string, Position>(allPositions.map((p) => [p.id, p]));
@@ -214,15 +219,25 @@ export default async function PoliticianPage({
               const examples = pickExamples(allMatches.filter((m) => m.topic === t.topic));
               if (examples.length === 0) return null;
               const position = positionsById.get(examples[0].position_id);
+              const stance = stanceByTopic.get(t.topic);
               return (
                 <article key={t.topic} className="rounded border border-stone-200 p-4 dark:border-stone-800">
                   <div className="flex items-center justify-between gap-3">
                     <span className="rounded bg-teal-50 px-2 py-0.5 font-mono text-[11px] font-semibold uppercase tracking-wide text-teal-800 dark:bg-teal-950 dark:text-teal-300">
                       {t.label}
                     </span>
-                    <span className="font-mono text-xs text-stone-500">stated {position?.stated_at}</span>
+                    {!stance && <span className="font-mono text-xs text-stone-500">stated {position?.stated_at}</span>}
                   </div>
-                  {position && <p className="mt-2 text-stone-800 dark:text-stone-200">&ldquo;{position.statement_text}&rdquo;</p>}
+                  {stance ? (
+                    <div className="mt-2">
+                      <p className="text-stone-800 dark:text-stone-200">{stance}</p>
+                      <p className="mt-1 font-mono text-[11px] text-stone-400 dark:text-stone-500">
+                        {`AI-inferred from ${t.positionCount} stated position${t.positionCount === 1 ? "" : "s"} and sponsored bills — see full record below for the source list.`}
+                      </p>
+                    </div>
+                  ) : (
+                    position && <p className="mt-2 text-stone-800 dark:text-stone-200">&ldquo;{position.statement_text}&rdquo;</p>
+                  )}
                   {t.summary.needsReview > 0 && (
                     <p className="mt-2 rounded bg-stone-50 p-2 text-xs text-stone-600 dark:bg-stone-900 dark:text-stone-400">
                       {t.summary.needsReview === 1

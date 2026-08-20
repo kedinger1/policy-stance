@@ -1,4 +1,4 @@
-import { supabase } from "./lib/supabase";
+import { supabase, fetchAllRows } from "./lib/supabase";
 import { tagVoteTopics, classifyMatches, type MatchCandidate } from "./lib/codex";
 import { withRetry } from "./lib/retry";
 
@@ -25,11 +25,9 @@ function chunk<T>(items: T[], size: number): T[][] {
 }
 
 async function run() {
-  const politicianIdsWithPositions = await withRetry(async () => {
-    const { data, error } = await supabase.from("positions").select("politician_id");
-    if (error) throw error;
-    return data;
-  });
+  const politicianIdsWithPositions = await withRetry(() =>
+    fetchAllRows((from, to) => supabase.from("positions").select("politician_id").range(from, to)),
+  );
   const withPositions = [...new Set(politicianIdsWithPositions.map((r) => r.politician_id))];
 
   // Votes is a large table (9,730+ rows) — fetching every row just to find distinct
@@ -60,7 +58,7 @@ async function run() {
     const votes = await withRetry(async () => {
       const { data, error } = await supabase
         .from("votes")
-        .select("id, bill_title, vote_value, voted_at")
+        .select("id, bill_title, bill_summary, openstates_bill_id, vote_value, voted_at")
         .eq("politician_id", politician.id)
         .order("voted_at", { ascending: false })
         .limit(VOTE_CAP_PER_POLITICIAN);
@@ -69,10 +67,11 @@ async function run() {
     });
     totalVotes += votes.length;
 
-    const labeledVotes = votes.map((v, i) => ({ label: `v${i}`, billTitle: v.bill_title, vote: v }));
+    const labeledVotes = votes.map((v, i) => ({ label: `v${i}`, billTitle: v.bill_title, billSummary: v.bill_summary, vote: v }));
     const tagByLabel: Record<string, { topic: string | null; relevance: number }> = {};
     for (const batch of chunk(labeledVotes, TAG_BATCH_SIZE)) {
-      Object.assign(tagByLabel, tagVoteTopics(batch.map(({ label, billTitle }) => ({ label, billTitle }))));
+      Object.assign(tagByLabel, tagVoteTopics(batch.map(({ label, billTitle, billSummary }) => ({ label, billTitle, billSummary }))));
+      console.log(`  tagged ${Object.keys(tagByLabel).length}/${labeledVotes.length}`);
     }
 
     const taggedVotes = labeledVotes.filter(({ label }) => tagByLabel[label].topic !== null);
@@ -91,13 +90,13 @@ async function run() {
     const politicianPositions = await withRetry(async () => {
       const { data, error } = await supabase
         .from("positions")
-        .select("id, topic, statement_text, stated_at")
+        .select("id, topic, statement_text, stated_at, source_bill_id")
         .eq("politician_id", politician.id);
       if (error) throw error;
       return data;
     });
 
-    const positionsByTopic = new Map<string, { id: string; statement_text: string; stated_at: string }[]>();
+    const positionsByTopic = new Map<string, { id: string; statement_text: string; stated_at: string; source_bill_id: string | null }[]>();
     for (const p of politicianPositions) {
       const list = positionsByTopic.get(p.topic) ?? [];
       list.push(p);
@@ -111,10 +110,19 @@ async function run() {
 
     const candidates: Array<{ label: string; voteId: string; topic: string; positionId: string; matchCandidate: MatchCandidate }> = [];
     let idx = 0;
+    let skippedSameBill = 0;
     for (const { label, vote } of relevantVotes) {
       const topic = tagByLabel[label].topic as string;
       const position = findPositionAsOf(topic, vote.voted_at);
       if (!position) continue;
+
+      // A sponsorship-derived position compared against a vote on that exact same
+      // bill is tautological -- of course a sponsor votes for their own bill. Not
+      // a real test of consistency, so skip it rather than count a trivial "kept".
+      if (position.source_bill_id && position.source_bill_id === vote.openstates_bill_id) {
+        skippedSameBill++;
+        continue;
+      }
 
       const matchLabel = `m${idx++}`;
       candidates.push({
@@ -125,12 +133,14 @@ async function run() {
         matchCandidate: {
           label: matchLabel,
           billTitle: vote.bill_title,
+          billSummary: vote.bill_summary,
           voteValue: vote.vote_value,
           positionStatement: position.statement_text,
           positionDate: position.stated_at,
         },
       });
     }
+    if (skippedSameBill > 0) console.log(`${skippedSameBill} skipped as tautological (own sponsored bill vs. own vote on it)`);
 
     console.log(`${candidates.length} votes had a prior position on the same topic to check against`);
     totalMatched += candidates.length;
@@ -146,6 +156,7 @@ async function run() {
     const judgments: Record<string, Awaited<ReturnType<typeof classifyMatches>>[string]> = {};
     for (const batch of chunk(candidates, CLASSIFY_BATCH_SIZE)) {
       Object.assign(judgments, classifyMatches(batch.map((c) => c.matchCandidate)));
+      console.log(`  classified ${Object.keys(judgments).length}/${candidates.length}`);
     }
 
     const rows = candidates.map((c) => {

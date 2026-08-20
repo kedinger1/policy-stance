@@ -21,13 +21,23 @@ function runCodexExec(prompt: string, jsonSchema: object, opts: { webSearch: boo
   // Prompt goes via stdin, not argv — avoids shell-quoting risk from embedded
   // quotes/punctuation. `shell: true` is required on Windows since the global
   // npm install resolves to a .cmd shim that spawnSync can't exec directly.
+  // A timeout is required too -- without one, a single hung call (network
+  // stall, auth hiccup) blocks the whole pipeline indefinitely with no signal
+  // that anything is wrong, rather than failing loudly so a caller can retry.
   const result = spawnSync("codex", args, {
     encoding: "utf-8",
     maxBuffer: 1024 * 1024 * 20,
     input: prompt,
     shell: true,
+    timeout: 5 * 60 * 1000,
   });
 
+  if (result.error) {
+    throw new Error(`codex exec did not complete: ${result.error.message}`);
+  }
+  if (result.signal) {
+    throw new Error(`codex exec was killed (signal ${result.signal}), likely timed out after 5 minutes`);
+  }
   if (result.status !== 0) {
     throw new Error(`codex exec failed (exit ${result.status ?? "unknown"}): ${result.stderr}`);
   }
@@ -142,7 +152,7 @@ const TOPIC_TAG_JSON_SCHEMA = {
   additionalProperties: false,
 };
 
-export type VoteForTagging = { label: string; billTitle: string };
+export type VoteForTagging = { label: string; billTitle: string; billSummary?: string | null };
 export type TopicTag = { topic: string | null; relevance: number };
 
 // Classifies each bill title into one topic from the fixed taxonomy (or null), plus
@@ -150,8 +160,10 @@ export type TopicTag = { topic: string | null; relevance: number };
 // topic. This is the filter that stops a symbolic/tangential bill (a wildlife-awareness
 // resolution) from being treated as a meaningful test of a climate-policy position just
 // because both share a broad topic label. No web search needed — pure reasoning over the title.
+// A bill's plain-language abstract, when available, is included alongside its title —
+// titles alone are often too terse to tell relevance apart from a bare topic match.
 export function tagVoteTopics(voteList: VoteForTagging[]): Record<string, TopicTag> {
-  const itemsText = voteList.map((v) => `${v.label}: ${v.billTitle}`).join("\n");
+  const itemsText = voteList.map((v) => `${v.label}: ${v.billTitle}${v.billSummary ? ` — ${v.billSummary}` : ""}`).join("\n");
   const topicList = TOPICS.join(", ");
   const prompt =
     `Classify each bill below into exactly one topic from this fixed list, or null if it doesn't clearly relate to any of them: ${topicList}. ` +
@@ -204,6 +216,7 @@ const MATCH_JSON_SCHEMA = {
 export type MatchCandidate = {
   label: string;
   billTitle: string;
+  billSummary?: string | null;
   voteValue: string;
   positionStatement: string;
   positionDate: string;
@@ -213,11 +226,15 @@ export type MatchResult = z.infer<typeof MatchClassificationSchema>["results"][n
 
 // Judges whether a vote is consistent with the politician's most recent stated
 // position on that topic. No web search — reasoning over the given text only.
+// A bill's plain-language abstract, when available, is included alongside its bare
+// title — several needs_review hedges have come from the AI correctly admitting a
+// terse title alone doesn't say what the bill actually does.
 export function classifyMatches(items: MatchCandidate[]): Record<string, Omit<MatchResult, "label">> {
   const itemsText = items
     .map(
       (i) =>
-        `${i.label}:\n  Stated position (${i.positionDate}): "${i.positionStatement}"\n  Vote: "${i.voteValue}" on "${i.billTitle}"`,
+        `${i.label}:\n  Stated position (${i.positionDate}): "${i.positionStatement}"\n  Vote: "${i.voteValue}" on "${i.billTitle}"` +
+        (i.billSummary ? ` — ${i.billSummary}` : ""),
     )
     .join("\n\n");
 
@@ -233,4 +250,65 @@ export function classifyMatches(items: MatchCandidate[]): Record<string, Omit<Ma
   const raw = runCodexExec(prompt, MATCH_JSON_SCHEMA, { webSearch: false });
   const parsed = MatchClassificationSchema.parse(raw);
   return Object.fromEntries(parsed.results.map(({ label, ...rest }) => [label, rest]));
+}
+
+// --- Topic stance summaries -------------------------------------------------
+
+const StanceSchema = z.object({
+  results: z.array(z.object({ label: z.string(), summary: z.string() })),
+});
+
+const STANCE_JSON_SCHEMA = {
+  type: "object",
+  properties: {
+    results: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { label: { type: "string" }, summary: { type: "string" } },
+        required: ["label", "summary"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["results"],
+  additionalProperties: false,
+};
+
+export type StanceCandidate = {
+  label: string;
+  politicianName: string;
+  topicLabel: string;
+  positions: { statementText: string; statedAt: string }[];
+};
+
+// A politician's positions on one topic, whether a researched quote or a
+// sponsored bill, can add up to dozens of entries -- individually true, but
+// unreadable as a raw list. This turns that list into one honest sentence or
+// two, explicitly asked to separate real policy philosophy from one-off
+// constituent casework and to flag anything that complicates a clean story,
+// rather than polish it into one. No web search -- reasoning over given text only.
+export function generateTopicStances(items: StanceCandidate[]): Record<string, string> {
+  const itemsText = items
+    .map((i) => {
+      const lines = i.positions.map((p) => `  - (${p.statedAt}) ${p.statementText}`).join("\n");
+      return `${i.label} (${i.politicianName} on ${i.topicLabel}):\n${lines}`;
+    })
+    .join("\n\n");
+
+  const prompt =
+    `For each politician-topic item below, write a 1-3 sentence "inferred stance" summarizing the pattern across all of their ` +
+    `listed positions and sponsored bills on that topic, in your own words -- not a bill-title dump. ` +
+    `Identify the dominant, recurring theme first. Explicitly separate broad policy philosophy from narrow one-off constituent ` +
+    `casework (a single nonprofit's tax exemption, a naming or commemorative bill, a hyper-local fix) -- casework doesn't reveal ` +
+    `much about their overall stance and shouldn't drive the summary. ` +
+    `If anything in the list runs counter to or complicates the dominant pattern, say so plainly rather than smoothing it into a ` +
+    `clean narrative -- an honest mixed picture is more useful than a flattering one. ` +
+    `Ground every claim strictly in the positions given; never infer motives, intentions, or facts not evidenced by the text. ` +
+    `Write in plain, readable language a general reader would understand, not legislative jargon. ` +
+    `Respond with the final JSON result only, one entry per label.\n\n${itemsText}`;
+
+  const raw = runCodexExec(prompt, STANCE_JSON_SCHEMA, { webSearch: false });
+  const parsed = StanceSchema.parse(raw);
+  return Object.fromEntries(parsed.results.map((r) => [r.label, r.summary]));
 }

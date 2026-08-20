@@ -1,4 +1,4 @@
-import { supabase } from "./lib/supabase";
+import { supabase, fetchAllRows } from "./lib/supabase";
 import { researchPositionsViaCodex } from "./lib/codex";
 import { withRetry } from "./lib/retry";
 
@@ -9,8 +9,7 @@ import { withRetry } from "./lib/retry";
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 async function run() {
-  const { data: positionRows, error: posError } = await supabase.from("positions").select("politician_id");
-  if (posError) throw posError;
+  const positionRows = await fetchAllRows((from, to) => supabase.from("positions").select("politician_id").range(from, to));
   const alreadyResearchedIds = [...new Set(positionRows.map((r) => r.politician_id))];
 
   const { data: politicians, error: pError } = await supabase
@@ -56,8 +55,11 @@ async function run() {
       console.log(`Skipped ${skippedBadDate} positions with unparseable dates`);
     }
 
+    // Scoped to quote-researched positions only -- a bare politician_id delete
+    // would also wipe out their sponsorship-derived positions, which live in
+    // this same table but come from ingest-positions-from-sponsorships.ts.
     await withRetry(async () => {
-      const { error } = await supabase.from("positions").delete().eq("politician_id", politician.id);
+      const { error } = await supabase.from("positions").delete().eq("politician_id", politician.id).is("source_bill_id", null);
       if (error) throw error;
     });
 

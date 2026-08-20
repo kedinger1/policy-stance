@@ -5,6 +5,7 @@ export type VoteRow = {
   openstates_bill_id: string;
   openstates_vote_id: string;
   bill_title: string;
+  bill_summary?: string | null;
   vote_value: string;
   voted_at: string;
   topic_tags: string[];
