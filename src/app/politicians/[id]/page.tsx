@@ -126,7 +126,7 @@ export default async function PoliticianPage({
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-12">
-      <Link href="/" className="font-mono text-xs uppercase tracking-wider text-teal-700 hover:underline dark:text-teal-400">
+      <Link href="/politicians" className="font-mono text-xs uppercase tracking-wider text-teal-700 hover:underline dark:text-teal-400">
         ← all politicians
       </Link>
 

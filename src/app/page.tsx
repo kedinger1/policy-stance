@@ -1,109 +1,312 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { supabase, fetchAllRows } from "@/lib/supabase";
-import { summarizeMatches, type Classification, type ReviewStatus } from "@/lib/scoring";
-import { TOPICS } from "@/lib/topics";
-import { TopicPills } from "@/components/TopicPills";
-import { Avatar } from "@/components/Avatar";
 
-// Data only changes when a pipeline script is run manually, not on every visit —
-// cache the render for an hour instead of re-querying on every request.
+// Counts only change when a pipeline script is run by hand — same hour-long cache
+// as the rest of the site.
 export const revalidate = 3600;
 
-export default async function Home({ searchParams }: { searchParams: Promise<{ topic?: string }> }) {
-  const { topic } = await searchParams;
-  const activeTopic = topic && (TOPICS as readonly string[]).includes(topic) ? topic : null;
+export const metadata: Metadata = {
+  title: "policy-stance — what they said, how they voted",
+  description:
+    "Lines up what New York state legislators say in public with how they actually vote, one dated statement and one roll call at a time, and shows its work.",
+};
 
-  // Every query here is paginated via fetchAllRows to avoid PostgREST's silent
-  // 1000-row cap on unfiltered/unpaginated selects — positions alone crossed
-  // that line once bill-sponsorship data landed, and matches crossed it earlier.
-  const positionRows = await fetchAllRows((from, to) =>
-    supabase.from("positions").select("politician_id").range(from, to),
-  );
-  const researchedIds = [...new Set(positionRows.map((r) => r.politician_id))];
+const CONFIDENT_STATUSES = ["ai_matched", "human_confirmed", "human_overridden"];
 
-  const { data: politicians, error: pError } = await supabase
-    .from("politicians")
-    .select("id, full_name, chamber, state, district, photo_url")
-    .in("id", researchedIds)
-    .order("full_name");
-  if (pError) throw pError;
+async function exactCount(query: PromiseLike<{ count: number | null; error: { message: string } | null }>) {
+  const { count, error } = await query;
+  if (error) throw error;
+  return count ?? 0;
+}
 
-  const allPositions = await fetchAllRows((from, to) =>
-    supabase.from("positions").select("politician_id, topic").in("politician_id", researchedIds).range(from, to),
-  );
+async function getStats() {
+  const positionRows = await fetchAllRows((from, to) => supabase.from("positions").select("politician_id").range(from, to));
+  const pilotIds = [...new Set(positionRows.map((r) => r.politician_id))];
 
-  const allMatches = await fetchAllRows<{ politician_id: string; classification: Classification; topic: string; status: ReviewStatus }>(
-    (from, to) =>
-      supabase.from("matches").select("politician_id, classification, topic, status").in("politician_id", researchedIds).range(from, to),
-  );
+  const [legislators, votes, matches, counted] = await Promise.all([
+    exactCount(supabase.from("politicians").select("*", { count: "exact", head: true }).in("chamber", ["upper", "lower"])),
+    exactCount(supabase.from("votes").select("*", { count: "exact", head: true }).in("politician_id", pilotIds)),
+    exactCount(supabase.from("matches").select("*", { count: "exact", head: true }).in("politician_id", pilotIds)),
+    exactCount(
+      supabase
+        .from("matches")
+        .select("*", { count: "exact", head: true })
+        .in("politician_id", pilotIds)
+        .in("status", CONFIDENT_STATUSES)
+        .in("classification", ["kept", "broken", "partial"]),
+    ),
+  ]);
 
-  const rows = politicians.map((politician) => {
-    const positions = allPositions.filter((p) => p.politician_id === politician.id);
-    const matches = allMatches.filter((m) => m.politician_id === politician.id);
+  return { pilot: pilotIds.length, legislators, positions: positionRows.length, votes, matches, counted };
+}
 
-    const positionCount = activeTopic ? positions.filter((p) => p.topic === activeTopic).length : positions.length;
-    const relevantMatches = activeTopic ? matches.filter((m) => m.topic === activeTopic) : matches;
-    const summary = summarizeMatches(relevantMatches);
+const fmt = (n: number) => n.toLocaleString("en-US");
 
-    return { politician, positionCount, summary };
-  });
+const LABEL = "font-mono text-xs uppercase tracking-wider text-teal-700 dark:text-teal-400";
+const H2 = "mt-2 text-2xl font-semibold tracking-tight text-stone-900 sm:text-3xl dark:text-stone-50";
+const BODY = "text-stone-600 dark:text-stone-400";
 
-  // Filtered by topic, sort by evidence (scoreable match count), not raw % —
-  // otherwise one lucky match at 100% would outrank a real track record.
-  const sortedRows = activeTopic ? [...rows].sort((a, b) => b.summary.scoreable - a.summary.scoreable) : rows;
+export default async function LandingPage() {
+  const stats = await getStats();
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-12">
-      <div className="mb-1 font-mono text-xs uppercase tracking-wider text-teal-700 dark:text-teal-400">
-        policy-stance — pilot review
-      </div>
-      <h1 className="text-2xl font-semibold tracking-tight text-stone-900 dark:text-stone-50">Politicians</h1>
-      <p className="mt-2 max-w-xl text-stone-600 dark:text-stone-400">
-        Every position and vote-match below is AI-sourced (Codex CLI) and reviewable — click through to see the
-        underlying quotes, sources, and rationale behind each score.
-      </p>
+    <div className="mx-auto max-w-3xl px-6 py-12 sm:py-16">
+      <div className={LABEL}>policy-stance · pilot · New York state legislature</div>
 
-      <div className="mt-6">
-        <TopicPills activeTopic={activeTopic} basePath="/" />
-      </div>
+      <section className="mt-6">
+        <h1 className="text-4xl font-semibold tracking-tight text-stone-900 sm:text-6xl dark:text-stone-50">
+          What they said.
+          <br />
+          How they voted.
+        </h1>
+        <p className="mt-6 max-w-xl text-lg leading-relaxed text-stone-700 dark:text-stone-300">
+          policy-stance lines up what New York state legislators say in public with how they actually vote — one dated
+          statement and one roll call at a time — and shows every step of the reasoning so you can check it yourself.
+        </p>
+        <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
+          <Link
+            href="/politicians"
+            className="rounded bg-teal-700 px-5 py-3 font-mono text-sm text-white transition-colors hover:bg-teal-800 dark:bg-teal-400 dark:text-stone-950 dark:hover:bg-teal-300"
+          >
+            {`Browse the ${stats.pilot} legislators →`}
+          </Link>
+          <a href="#how" className="font-mono text-sm text-teal-700 underline-offset-4 hover:underline dark:text-teal-400">
+            How it works
+          </a>
+        </div>
+      </section>
 
-      <ul className="mt-8 divide-y divide-stone-200 dark:divide-stone-800">
-        {sortedRows.map(({ politician, positionCount, summary }) => (
-          <li key={politician.id}>
-            <Link
-              href={activeTopic ? `/politicians/${politician.id}?topic=${activeTopic}` : `/politicians/${politician.id}`}
-              className="flex items-center justify-between gap-4 py-4 transition-colors hover:bg-stone-50 dark:hover:bg-stone-900"
-            >
-              <div className="flex items-center gap-3">
-                <Avatar src={politician.photo_url} name={politician.full_name} />
-                <div>
-                  <div className="font-medium text-stone-900 dark:text-stone-50">{politician.full_name}</div>
-                  <div className="font-mono text-xs text-stone-500 dark:text-stone-500">
-                    {politician.state} · {politician.chamber}
-                    {politician.district ? ` · District ${politician.district}` : ""}
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center gap-4 font-mono text-xs text-stone-500 dark:text-stone-500">
-                {activeTopic && positionCount === 0 ? (
-                  <span className="italic text-stone-400 dark:text-stone-600">no tracked positions on this topic yet</span>
-                ) : (
-                  <>
-                    <span>
-                      {positionCount} position{positionCount === 1 ? "" : "s"}
-                    </span>
-                    <span>
-                      {summary.consistency === null
-                        ? "—"
-                        : `${Math.round(summary.consistency * 100)}% consistent (n=${summary.scoreable})`}
-                    </span>
-                  </>
-                )}
-              </div>
-            </Link>
-          </li>
-        ))}
-      </ul>
+      <section className="mt-14" aria-labelledby="example-heading">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+          <h2 id="example-heading" className={LABEL}>
+            One comparison, start to finish
+          </h2>
+          <span className="font-mono text-[11px] text-stone-400 dark:text-stone-500">illustrative · not a real person</span>
+        </div>
+        <div className="mt-3 divide-y divide-stone-200 rounded border border-stone-200 dark:divide-stone-800 dark:border-stone-800">
+          <ExampleRow label="Stated" meta="press release · March 2024">
+            <p className="text-stone-800 dark:text-stone-200">
+              &ldquo;Any new tax revenue should go toward lowering local property taxes.&rdquo;
+            </p>
+          </ExampleRow>
+          <ExampleRow label="Voted" meta="roll call · May 2026">
+            <p className="text-stone-800 dark:text-stone-200">
+              <span className="font-medium">Yes</span>
+              {" "}
+              on a bill extending a county&apos;s authority to levy a new occupancy tax.
+            </p>
+          </ExampleRow>
+          <ExampleRow label="Verdict" meta="with a one-sentence rationale, always shown">
+            <div className="flex items-start gap-3">
+              <span className="mt-0.5 shrink-0 rounded bg-red-100 px-2 py-0.5 font-mono text-[11px] font-semibold uppercase tracking-wide text-red-800 dark:bg-red-950 dark:text-red-300">
+                broken
+              </span>
+              <p className="text-stone-800 dark:text-stone-200">
+                The stated goal was to push tax revenue toward property-tax relief; this vote keeps a new tax in place without
+                that offset.
+              </p>
+            </div>
+          </ExampleRow>
+        </div>
+        <p className="mt-3 font-mono text-xs text-stone-500">
+          Four possible verdicts:{" "}
+          <Chip tone="kept">kept</Chip> <Chip tone="broken">broken</Chip> <Chip tone="partial">partial</Chip>{" "}
+          <Chip tone="na">not a clean test</Chip>
+        </p>
+      </section>
+
+      <section className="mt-20" aria-labelledby="why-heading">
+        <div className={LABEL}>Why this exists</div>
+        <h2 id="why-heading" className={H2}>
+          Words are cheap. Roll calls are public. Nobody lines them up.
+        </h2>
+        <div className={`mt-5 space-y-4 ${BODY}`}>
+          <p>
+            State legislatures decide much of what touches daily life — taxes, housing, schools, policing — and tend to
+            get far less scrutiny than Congress. New York&apos;s 213 legislators cast thousands of recorded votes every session,
+            under titles like &ldquo;Relates to the powers of the New York state housing finance agency.&rdquo; Almost no
+            one reads them against what the same people say on the campaign trail.
+          </p>
+          <p>
+            Existing tools tend to do one half of the job: grade a vote tally against an advocacy group&apos;s agenda, or track
+            campaign promises. We&apos;re trying to connect the two directly — a specific, dated statement to the specific votes
+            that actually test it — with the reasoning attached to every judgment.
+          </p>
+        </div>
+      </section>
+
+      <section id="how" className="mt-20 scroll-mt-8" aria-labelledby="how-heading">
+        <div className={LABEL}>How it works</div>
+        <h2 id="how-heading" className={H2}>
+          Three steps, each one inspectable.
+        </h2>
+        <ol className="mt-8 space-y-8">
+          <Step n="1" title="Collect what they've said and sponsored">
+            Dated, sourced statements — press releases, speeches, news quotes — plus the bills each legislator personally
+            introduced. A name on a bill is about as explicit and verifiable as a stated position gets.
+          </Step>
+          <Step n="2" title="Match each statement to the votes that actually test it">
+            Every vote is tagged by issue and scored for how squarely it tests that issue — a wildlife-awareness resolution
+            isn&apos;t a test of someone&apos;s climate policy, even though both are loosely &ldquo;environment.&rdquo; Votes are
+            compared against the legislator&apos;s most recent position on that issue at the time of the vote.
+          </Step>
+          <Step n="3" title="Judge it, and show the work">
+            Each comparison gets a verdict and a one-sentence rationale. Judgments the AI isn&apos;t confident about are held out of
+            the score until a person reviews them, and every percentage is shown with the number of comparisons behind it.
+          </Step>
+        </ol>
+      </section>
+
+      <section className="mt-20" aria-labelledby="live-heading">
+        <div className={LABEL}>The pilot, right now</div>
+        <h2 id="live-heading" className={H2}>
+          {stats.pilot} of {stats.legislators} legislators so far.
+        </h2>
+        <dl className="mt-6 grid grid-cols-2 gap-px overflow-hidden rounded border border-stone-200 bg-stone-200 sm:grid-cols-4 dark:border-stone-800 dark:bg-stone-800">
+          <Stat value={fmt(stats.positions)} label="statements and sponsored bills" />
+          <Stat value={fmt(stats.votes)} label="roll-call votes on file" />
+          <Stat value={fmt(stats.matches)} label="statement-to-vote comparisons" />
+          <Stat value={fmt(stats.counted)} label="counted toward scores" />
+        </dl>
+        <p className="mt-3 text-sm text-stone-500">
+          Most comparisons don&apos;t end up in a score, and that&apos;s deliberate. Many votes simply don&apos;t squarely test a given
+          statement, so they&apos;re judged &ldquo;not a clean test,&rdquo; and comparisons the AI wasn&apos;t sure about wait for human
+          review rather than being averaged in as if they were evidence.
+        </p>
+      </section>
+
+      <section className="mt-20" aria-labelledby="caveats-heading">
+        <div className={LABEL}>What a score does and doesn&apos;t say</div>
+        <h2 id="caveats-heading" className={H2}>
+          Read it as a starting point, not a verdict.
+        </h2>
+        <dl className="mt-6 space-y-6">
+          <Caveat term="Consistency isn't the same as being right.">
+            Voting in line with what you&apos;ve said measures follow-through, not whether the position is good policy.
+          </Caveat>
+          <Caveat term="Only votes that reached the floor count.">
+            Legislative leadership largely controls which bills get a vote, so a lack of votes on an issue may reflect leadership
+            blocking it, not the member&apos;s own choice.
+          </Caveat>
+          <Caveat term="“No vote has clearly tested this” is not zero.">
+            Plenty of issues have a stated position but no vote that squarely tests it. We&apos;d rather say that than pad a number.
+          </Caveat>
+          <Caveat term="An AI does the first pass, and it makes mistakes.">
+            That&apos;s why every judgment links to its rationale and source, why uncertain ones are held back, and why this is
+            labelled a pilot. Check anything that matters against the primary sources.
+          </Caveat>
+        </dl>
+      </section>
+
+      <section className="mt-20" aria-labelledby="potential-heading">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+          <div className={LABEL}>Where this could go</div>
+          <span className="font-mono text-[11px] text-stone-400 dark:text-stone-500">potential, not promises</span>
+        </div>
+        <h2 id="potential-heading" className={H2}>
+          Follow-through, visible before you vote.
+        </h2>
+        <ul className={`mt-5 space-y-3 ${BODY}`}>
+          <Potential title="Voters.">
+            New York legislators serve two-year terms, so every seat is on the ballot every even year. A record of follow-through
+            gives voters something sturdier than a mailer.
+          </Potential>
+          <Potential title="Reporters, advocates, and staff.">
+            A sourced shortlist of votes that cut against a stated position is a faster place to start than a thousand bill
+            titles.
+          </Potential>
+          <Potential title="Beyond New York.">
+            The legislative data comes from Open States, which covers every state, so the approach isn&apos;t specific to New York.
+          </Potential>
+          <Potential title="Your priorities.">
+            Weighting the issues you care about most is on the list, once we&apos;ve talked to enough voters to know what
+            &ldquo;important to me&rdquo; should mean.
+          </Potential>
+        </ul>
+      </section>
+
+      <section className="mt-20 border-t border-stone-200 pt-10 dark:border-stone-800">
+        <h2 className="text-2xl font-semibold tracking-tight text-stone-900 dark:text-stone-50">
+          Start with the pilot.
+        </h2>
+        <p className={`mt-2 max-w-xl ${BODY}`}>
+          Pick an issue, see who has been tested on it, and click through to the statements, votes, and reasoning behind each
+          number.
+        </p>
+        <Link
+          href="/politicians"
+          className="mt-6 inline-block rounded bg-teal-700 px-5 py-3 font-mono text-sm text-white transition-colors hover:bg-teal-800 dark:bg-teal-400 dark:text-stone-950 dark:hover:bg-teal-300"
+        >
+          {`Browse the ${stats.pilot} legislators →`}
+        </Link>
+        <p className="mt-10 font-mono text-xs text-stone-500">
+          Legislative data from Open States. Statements are AI-researched from public sources and linked to where they were found.
+          Pilot data — not a substitute for reading the primary record.
+        </p>
+      </section>
     </div>
+  );
+}
+
+function ExampleRow({ label, meta, children }: { label: string; meta: string; children: React.ReactNode }) {
+  return (
+    <div className="grid gap-1 p-4 sm:grid-cols-[6.5rem_1fr] sm:gap-4">
+      <div>
+        <div className="font-mono text-xs font-semibold uppercase tracking-wider text-stone-900 dark:text-stone-50">{label}</div>
+        <div className="font-mono text-[11px] text-stone-500">{meta}</div>
+      </div>
+      <div>{children}</div>
+    </div>
+  );
+}
+
+const CHIP_STYLE = {
+  kept: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300",
+  broken: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300",
+  partial: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
+  na: "bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-400",
+};
+
+function Chip({ tone, children }: { tone: keyof typeof CHIP_STYLE; children: React.ReactNode }) {
+  return <span className={`rounded px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${CHIP_STYLE[tone]}`}>{children}</span>;
+}
+
+function Step({ n, title, children }: { n: string; title: string; children: React.ReactNode }) {
+  return (
+    <li className="grid grid-cols-[2.5rem_1fr] gap-4">
+      <div className="font-mono text-3xl font-semibold leading-none text-teal-700 dark:text-teal-400">{n}</div>
+      <div>
+        <h3 className="text-lg font-semibold text-stone-900 dark:text-stone-50">{title}</h3>
+        <p className={`mt-1 ${BODY}`}>{children}</p>
+      </div>
+    </li>
+  );
+}
+
+function Stat({ value, label }: { value: string; label: string }) {
+  return (
+    <div className="flex flex-col-reverse justify-end bg-white p-4 dark:bg-stone-950">
+      <dt className="mt-1 font-mono text-[11px] uppercase tracking-wide text-stone-500">{label}</dt>
+      <dd className="font-mono text-2xl font-semibold tabular-nums text-stone-900 dark:text-stone-50">{value}</dd>
+    </div>
+  );
+}
+
+function Caveat({ term, children }: { term: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <dt className="font-semibold text-stone-900 dark:text-stone-50">{term}</dt>
+      <dd className={`mt-1 ${BODY}`}>{children}</dd>
+    </div>
+  );
+}
+
+function Potential({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <li>
+      <span className="font-semibold text-stone-900 dark:text-stone-50">{title} </span>
+      {children}
+    </li>
   );
 }
