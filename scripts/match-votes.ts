@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { supabase, fetchAllRows } from "./lib/supabase";
 import { tagVoteTopics, classifyMatches, type MatchCandidate } from "./lib/codex";
 import { withRetry } from "./lib/retry";
@@ -22,6 +23,25 @@ function chunk<T>(items: T[], size: number): T[][] {
   const chunks: T[][] = [];
   for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
   return chunks;
+}
+
+// vote_tags cache, keyed by a hash of exactly what the tagger sees (title + summary),
+// so identical bills share one tag across legislators and runs, and a bill that later
+// gains a summary is re-tagged automatically.
+const tagCache = new Map<string, { topic: string | null; relevance: number }>();
+const textKey = (title: string, summary: string | null) => createHash("sha256").update(`${title}\n${summary ?? ""}`).digest("hex");
+
+async function loadCachedTags(keys: string[]) {
+  const missing = keys.filter((k) => !tagCache.has(k));
+  // 64-char keys in a URL: keep chunks small enough to stay well under header limits.
+  for (const batch of chunk(missing, 100)) {
+    const rows = await withRetry(async () => {
+      const { data, error } = await supabase.from("vote_tags").select("text_key, topic, relevance").in("text_key", batch);
+      if (error) throw error;
+      return data;
+    });
+    for (const r of rows) tagCache.set(r.text_key, { topic: r.topic, relevance: r.relevance });
+  }
 }
 
 async function run() {
@@ -53,7 +73,28 @@ async function run() {
   let totalTagged = 0;
   let totalMatched = 0;
 
+  // Resume support: this run is long and quota-hungry, so after an interruption
+  // (usage limit, closed laptop) pass --since=<ISO date> to skip anyone whose matches
+  // were already refreshed on or after that time, instead of redoing them.
+  const since = process.argv.find((a) => a.startsWith("--since="))?.slice("--since=".length);
+
   for (const politician of politicians) {
+    if (since) {
+      const latest = await withRetry(async () => {
+        const { data, error } = await supabase
+          .from("matches")
+          .select("created_at")
+          .eq("politician_id", politician.id)
+          .order("created_at", { ascending: false })
+          .limit(1);
+        if (error) throw error;
+        return data[0]?.created_at as string | undefined;
+      });
+      if (latest && latest >= since) {
+        console.log(`\n=== ${politician.full_name} === already refreshed since ${since}, skipping`);
+        continue;
+      }
+    }
     console.log(`\n=== ${politician.full_name} ===`);
     const votes = await withRetry(async () => {
       const { data, error } = await supabase
@@ -68,10 +109,43 @@ async function run() {
     totalVotes += votes.length;
 
     const labeledVotes = votes.map((v, i) => ({ label: `v${i}`, billTitle: v.bill_title, billSummary: v.bill_summary, vote: v }));
+
+    // Tags come from the vote_tags cache (shared across legislators and across runs);
+    // only bill texts never seen before are sent to the AI, and each batch is saved
+    // as it completes so an interrupted run keeps its progress.
+    const keyOf = new Map(labeledVotes.map((l) => [l.label, textKey(l.billTitle, l.billSummary)]));
+    await loadCachedTags([...new Set(keyOf.values())]);
+
+    const seen = new Set<string>();
+    const toTag = labeledVotes.filter((l) => {
+      const key = keyOf.get(l.label) as string;
+      if (tagCache.has(key) || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    console.log(`  ${labeledVotes.length - toTag.length} of ${labeledVotes.length} votes already tagged (cache), ${toTag.length} new bill texts to tag`);
+
+    let tagged = 0;
+    for (const batch of chunk(toTag, TAG_BATCH_SIZE)) {
+      const result = tagVoteTopics(batch.map(({ label, billTitle, billSummary }) => ({ label, billTitle, billSummary })));
+      const rows = batch.flatMap(({ label }) =>
+        result[label]
+          ? [{ text_key: keyOf.get(label) as string, topic: result[label].topic, relevance: result[label].relevance }]
+          : [],
+      );
+      if (rows.length < batch.length) console.log(`  warning: AI returned no tag for ${batch.length - rows.length} of ${batch.length}; they'll be retried next run`);
+      await withRetry(async () => {
+        const { error } = await supabase.from("vote_tags").upsert(rows, { onConflict: "text_key" });
+        if (error) throw error;
+      });
+      for (const r of rows) tagCache.set(r.text_key, { topic: r.topic, relevance: r.relevance });
+      tagged += batch.length;
+      console.log(`  tagged ${tagged}/${toTag.length} new`);
+    }
+
     const tagByLabel: Record<string, { topic: string | null; relevance: number }> = {};
-    for (const batch of chunk(labeledVotes, TAG_BATCH_SIZE)) {
-      Object.assign(tagByLabel, tagVoteTopics(batch.map(({ label, billTitle, billSummary }) => ({ label, billTitle, billSummary }))));
-      console.log(`  tagged ${Object.keys(tagByLabel).length}/${labeledVotes.length}`);
+    for (const { label } of labeledVotes) {
+      tagByLabel[label] = tagCache.get(keyOf.get(label) as string) ?? { topic: null, relevance: 1 };
     }
 
     const taggedVotes = labeledVotes.filter(({ label }) => tagByLabel[label].topic !== null);
@@ -82,21 +156,24 @@ async function run() {
         `${relevantVotes.length} relevant enough (>=${RELEVANCE_THRESHOLD}/10) to actually test`,
     );
 
-    // Fetch this politician's positions once and index by topic (sorted newest
-    // first), then look up "most recent position as of the vote date" in memory
+    // Only statements are anchors here -- sponsored bills are deeds, like votes, so
+    // comparing a vote against one is deed-vs-deed, not the say-vs-do test this
+    // score claims to be. (Fetch this politician's statements once and index by
+    // topic, sorted newest first, then look up "most recent as of the vote date" in memory
     // for every candidate — a relevantVotes.length round-trip to Supabase per
     // vote (hundreds, now that votes are capped at 1,000/politician instead of
-    // ~46) is both slow and fragile to any single transient network hiccup.
+    // ~46) is both slow and fragile to any single transient network hiccup.)
     const politicianPositions = await withRetry(async () => {
       const { data, error } = await supabase
         .from("positions")
-        .select("id, topic, statement_text, stated_at, source_bill_id")
-        .eq("politician_id", politician.id);
+        .select("id, topic, statement_text, stated_at")
+        .eq("politician_id", politician.id)
+        .neq("source_type", "bill_sponsorship");
       if (error) throw error;
       return data;
     });
 
-    const positionsByTopic = new Map<string, { id: string; statement_text: string; stated_at: string; source_bill_id: string | null }[]>();
+    const positionsByTopic = new Map<string, { id: string; statement_text: string; stated_at: string }[]>();
     for (const p of politicianPositions) {
       const list = positionsByTopic.get(p.topic) ?? [];
       list.push(p);
@@ -110,19 +187,10 @@ async function run() {
 
     const candidates: Array<{ label: string; voteId: string; topic: string; positionId: string; matchCandidate: MatchCandidate }> = [];
     let idx = 0;
-    let skippedSameBill = 0;
     for (const { label, vote } of relevantVotes) {
       const topic = tagByLabel[label].topic as string;
       const position = findPositionAsOf(topic, vote.voted_at);
       if (!position) continue;
-
-      // A sponsorship-derived position compared against a vote on that exact same
-      // bill is tautological -- of course a sponsor votes for their own bill. Not
-      // a real test of consistency, so skip it rather than count a trivial "kept".
-      if (position.source_bill_id && position.source_bill_id === vote.openstates_bill_id) {
-        skippedSameBill++;
-        continue;
-      }
 
       const matchLabel = `m${idx++}`;
       candidates.push({
@@ -140,7 +208,6 @@ async function run() {
         },
       });
     }
-    if (skippedSameBill > 0) console.log(`${skippedSameBill} skipped as tautological (own sponsored bill vs. own vote on it)`);
 
     console.log(`${candidates.length} votes had a prior position on the same topic to check against`);
     totalMatched += candidates.length;
@@ -159,10 +226,28 @@ async function run() {
       console.log(`  classified ${Object.keys(judgments).length}/${candidates.length}`);
     }
 
+    // Decisions a person already made (confirmed or overridden) must survive a re-run:
+    // this script replaces a politician's matches wholesale, which would otherwise wipe
+    // every review. Carry them forward onto the same statement-and-vote pair.
+    const reviewed = await withRetry(async () => {
+      const { data, error } = await supabase
+        .from("matches")
+        .select("position_id, vote_id, classification, status, reviewed_by, reviewed_at")
+        .eq("politician_id", politician.id)
+        .in("status", ["human_confirmed", "human_overridden"]);
+      if (error) throw error;
+      return data;
+    });
+    const reviewedByPair = new Map(reviewed.map((r) => [`${r.position_id}|${r.vote_id}`, r]));
+
     const rows = candidates.map((c) => {
       const judgment = judgments[c.label];
-      const status = judgment.confidence >= CONFIDENCE_THRESHOLD ? "ai_matched" : "needs_review";
-      return {
+      // A "broken" verdict is an accusation about a named person, so it is always held
+      // for a human to confirm before it can count or be shown as a contradiction,
+      // however confident the AI is. Everything else auto-publishes above the threshold.
+      const status =
+        judgment.classification === "broken" || judgment.confidence < CONFIDENCE_THRESHOLD ? "needs_review" : "ai_matched";
+      const base = {
         politician_id: politician.id,
         position_id: c.positionId,
         vote_id: c.voteId,
@@ -171,7 +256,13 @@ async function run() {
         rationale: judgment.rationale,
         confidence: judgment.confidence,
         status,
+        reviewed_by: null as string | null,
+        reviewed_at: null as string | null,
       };
+      const prior = reviewedByPair.get(`${c.positionId}|${c.voteId}`);
+      return prior
+        ? { ...base, classification: prior.classification, status: prior.status, reviewed_by: prior.reviewed_by, reviewed_at: prior.reviewed_at }
+        : base;
     });
 
     await withRetry(async () => {

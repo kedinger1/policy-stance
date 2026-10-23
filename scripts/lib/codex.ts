@@ -14,7 +14,11 @@ function runCodexExec(prompt: string, jsonSchema: object, opts: { webSearch: boo
   const outputPath = path.join(dir, "output.json");
   writeFileSync(schemaPath, JSON.stringify(jsonSchema));
 
-  const args = ["exec", "--sandbox", "read-only", "--skip-git-repo-check"];
+  // Pin the model explicitly instead of inheriting ~/.codex/config.toml: that file
+  // is shared with the Codex desktop app, and its default (gpt-5.5) is rejected on
+  // ChatGPT-account logins, which broke every call. Override with CODEX_MODEL.
+  const model = process.env.CODEX_MODEL ?? "gpt-5.6-terra";
+  const args = ["exec", "-m", model, "--sandbox", "read-only", "--skip-git-repo-check"];
   if (opts.webSearch) args.push("-c", "tools.web_search=true");
   args.push("--output-schema", schemaPath, "-o", outputPath);
 
@@ -240,6 +244,10 @@ export function classifyMatches(items: MatchCandidate[]): Record<string, Omit<Ma
 
   const prompt =
     `For each item below, judge whether the vote is consistent with the politician's earlier stated position on the same topic. ` +
+    `Judge only from the text given: never use outside knowledge to guess what a statement "really" referred to or which bill it meant. ` +
+    `"broken" is a high bar: the vote must do the opposite of something the statement explicitly called for or opposed, on the same specific question. ` +
+    `General criticism (of a budget, a process, "costly" policy, spending) is NOT contradicted by voting for a specific budget bill, tax authorization, or narrow measure unless the statement explicitly committed to oppose that kind of vote; in that case answer "na". ` +
+    `A statement made years before a different bill is rarely a clean test of it. ` +
     `Classify as "kept" (vote clearly matches the stated position), "broken" (vote clearly contradicts it), ` +
     `"partial" (only when the bill is bundled/omnibus and mixes provisions for and against the position, or the vote is a genuine, explainable tradeoff on the exact same specific question the position addresses), ` +
     `or "na" (the vote addresses a different, more specific, or more tangential question than the position does — even if it shares the same broad topic — or the two simply aren't close enough to judge). ` +

@@ -1,8 +1,14 @@
 @import "tailwindcss";
 
+/* Dark mode is class-based so the nav toggle can override the OS setting.
+   The inline script in layout.tsx sets .dark before first paint, from the
+   saved choice or, failing that, the OS preference. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  color-scheme: light;
 }
 
 @theme inline {
@@ -12,11 +18,14 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+.dark {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+  color-scheme: dark;
+  /* stone-500 is only 4.14:1 on the dark background (AA needs 4.5:1 for small
+     text), and it's used site-wide for captions and labels, so lift it here
+     rather than adding a dark: override to every use. */
+  --color-stone-500: var(--color-stone-400);
 }
 
 body {

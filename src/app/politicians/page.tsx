@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { supabase, fetchAllRows } from "@/lib/supabase";
-import { summarizeMatches, type Classification, type ReviewStatus } from "@/lib/scoring";
+import { describeResult, summarizeMatches, type Classification, type ReviewStatus } from "@/lib/scoring";
 import { TOPICS } from "@/lib/topics";
 import { TopicPills } from "@/components/TopicPills";
 import { Avatar } from "@/components/Avatar";
@@ -28,39 +28,48 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ t
     .order("full_name");
   if (pError) throw pError;
 
+  const { count: totalLegislators, error: totalError } = await supabase
+    .from("politicians")
+    .select("*", { count: "exact", head: true })
+    .in("chamber", ["upper", "lower"]);
+  if (totalError) throw totalError;
+
   const allPositions = await fetchAllRows((from, to) =>
-    supabase.from("positions").select("politician_id, topic").in("politician_id", researchedIds).range(from, to),
+    supabase.from("positions").select("politician_id, topic, source_type").in("politician_id", researchedIds).range(from, to),
   );
 
-  const allMatches = await fetchAllRows<{ politician_id: string; classification: Classification; topic: string; status: ReviewStatus }>(
+  const allMatches = await fetchAllRows<{ politician_id: string; position_id: string; classification: Classification; topic: string; status: ReviewStatus }>(
     (from, to) =>
-      supabase.from("matches").select("politician_id, classification, topic, status").in("politician_id", researchedIds).range(from, to),
+      supabase.from("matches").select("politician_id, position_id, classification, topic, status").in("politician_id", researchedIds).range(from, to),
   );
 
   const rows = politicians.map((politician) => {
     const positions = allPositions.filter((p) => p.politician_id === politician.id);
     const matches = allMatches.filter((m) => m.politician_id === politician.id);
 
-    const positionCount = activeTopic ? positions.filter((p) => p.topic === activeTopic).length : positions.length;
+    // Statements (words) and sponsored bills (deeds) are counted apart: only statements are scored against votes.
+    const inScope = activeTopic ? positions.filter((p) => p.topic === activeTopic) : positions;
+    const statementCount = inScope.filter((p) => p.source_type !== "bill_sponsorship").length;
+    const billCount = inScope.length - statementCount;
     const relevantMatches = activeTopic ? matches.filter((m) => m.topic === activeTopic) : matches;
     const summary = summarizeMatches(relevantMatches);
 
-    return { politician, positionCount, summary };
+    return { politician, statementCount, billCount, summary };
   });
 
   // Filtered by topic, sort by evidence (scoreable match count), not raw % —
   // otherwise one lucky match at 100% would outrank a real track record.
-  const sortedRows = activeTopic ? [...rows].sort((a, b) => b.summary.scoreable - a.summary.scoreable) : rows;
+  const sortedRows = activeTopic ? [...rows].sort((a, b) => b.summary.statementsTested - a.summary.statementsTested) : rows;
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-12">
-      <Link href="/" className="mb-1 inline-block font-mono text-xs uppercase tracking-wider text-teal-700 hover:underline dark:text-teal-400">
-        ← policy-stance — about this project
-      </Link>
+      <div className="mb-1 font-mono text-xs uppercase tracking-wider text-teal-700 dark:text-teal-400">
+        Explore — pilot review
+      </div>
       <h1 className="text-2xl font-semibold tracking-tight text-stone-900 dark:text-stone-50">Politicians</h1>
       <p className="mt-2 max-w-xl text-stone-600 dark:text-stone-400">
         Every position and vote-match below is AI-sourced (Codex CLI) and reviewable — click through to see the
-        underlying quotes, sources, and rationale behind each score.
+        underlying statements, sources, and rationale behind each result.
       </p>
 
       <div className="mt-6">
@@ -68,7 +77,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ t
       </div>
 
       <ul className="mt-8 divide-y divide-stone-200 dark:divide-stone-800">
-        {sortedRows.map(({ politician, positionCount, summary }) => (
+        {sortedRows.map(({ politician, statementCount, billCount, summary }) => (
           <li key={politician.id}>
             <Link
               href={activeTopic ? `/politicians/${politician.id}?topic=${activeTopic}` : `/politicians/${politician.id}`}
@@ -85,18 +94,12 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ t
                 </div>
               </div>
               <div className="flex items-center gap-4 font-mono text-xs text-stone-500 dark:text-stone-500">
-                {activeTopic && positionCount === 0 ? (
-                  <span className="italic text-stone-400 dark:text-stone-600">no tracked positions on this topic yet</span>
+                {activeTopic && statementCount + billCount === 0 ? (
+                  <span className="italic text-stone-500">nothing tracked on this topic yet</span>
                 ) : (
                   <>
-                    <span>
-                      {positionCount} position{positionCount === 1 ? "" : "s"}
-                    </span>
-                    <span>
-                      {summary.consistency === null
-                        ? "—"
-                        : `${Math.round(summary.consistency * 100)}% consistent (n=${summary.scoreable})`}
-                    </span>
+                    <span>{`${statementCount} statement${statementCount === 1 ? "" : "s"} · ${billCount} bill${billCount === 1 ? "" : "s"}`}</span>
+                    <span>{describeResult(summary)}</span>
                   </>
                 )}
               </div>
@@ -104,6 +107,18 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ t
           </li>
         ))}
       </ul>
+
+      <div className="mt-10 border-t border-stone-200 pt-6 dark:border-stone-800">
+        <p className="text-xl font-semibold tracking-tight text-stone-900 dark:text-stone-50">
+          {`${politicians.length} of ${totalLegislators ?? "—"} legislators so far.`}
+        </p>
+        <p className="mt-1 text-sm text-stone-500">
+          <Link href="/methodology" className="underline underline-offset-2 hover:text-stone-900 dark:hover:text-stone-50">
+            See the methodology
+          </Link>{" "}
+          for what these numbers do and don&apos;t say.
+        </p>
+      </div>
     </div>
   );
 }

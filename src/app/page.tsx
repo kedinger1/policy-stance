@@ -1,13 +1,14 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { supabase, fetchAllRows } from "@/lib/supabase";
+import { SITE_NAME } from "@/lib/site";
 
 // Counts only change when a pipeline script is run by hand — same hour-long cache
 // as the rest of the site.
 export const revalidate = 3600;
 
 export const metadata: Metadata = {
-  title: "policy-stance — what they said, how they voted",
+  title: `${SITE_NAME} — what they said, how they voted`,
   description:
     "Lines up what New York state legislators say in public with how they actually vote, one dated statement and one roll call at a time, and shows its work.",
 };
@@ -21,24 +22,34 @@ async function exactCount(query: PromiseLike<{ count: number | null; error: { me
 }
 
 async function getStats() {
-  const positionRows = await fetchAllRows((from, to) => supabase.from("positions").select("politician_id").range(from, to));
+  const positionRows = await fetchAllRows((from, to) => supabase.from("positions").select("politician_id, source_type").range(from, to));
   const pilotIds = [...new Set(positionRows.map((r) => r.politician_id))];
 
-  const [legislators, votes, matches, counted] = await Promise.all([
+  const [legislators, votes, matchRows] = await Promise.all([
     exactCount(supabase.from("politicians").select("*", { count: "exact", head: true }).in("chamber", ["upper", "lower"])),
     exactCount(supabase.from("votes").select("*", { count: "exact", head: true }).in("politician_id", pilotIds)),
-    exactCount(supabase.from("matches").select("*", { count: "exact", head: true }).in("politician_id", pilotIds)),
-    exactCount(
-      supabase
-        .from("matches")
-        .select("*", { count: "exact", head: true })
-        .in("politician_id", pilotIds)
-        .in("status", CONFIDENT_STATUSES)
-        .in("classification", ["kept", "broken", "partial"]),
+    fetchAllRows((from, to) =>
+      supabase.from("matches").select("position_id, classification, status").in("politician_id", pilotIds).range(from, to),
     ),
   ]);
 
-  return { pilot: pilotIds.length, legislators, positions: positionRows.length, votes, matches, counted };
+  // A statement counts as tested once at least one confident vote clearly tests it,
+  // however many votes do -- the same unit the results themselves use.
+  const testedStatements = new Set(
+    matchRows
+      .filter((m) => CONFIDENT_STATUSES.includes(m.status) && m.classification !== "na")
+      .map((m) => m.position_id),
+  );
+
+  return {
+    pilot: pilotIds.length,
+    legislators,
+    statements: positionRows.filter((r) => r.source_type !== "bill_sponsorship").length,
+    sponsored: positionRows.filter((r) => r.source_type === "bill_sponsorship").length,
+    votes,
+    matches: matchRows.length,
+    tested: testedStatements.size,
+  };
 }
 
 const fmt = (n: number) => n.toLocaleString("en-US");
@@ -52,7 +63,7 @@ export default async function LandingPage() {
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-12 sm:py-16">
-      <div className={LABEL}>policy-stance · pilot · New York state legislature</div>
+      <div className={LABEL}>{`${SITE_NAME} · pilot · New York state legislature`}</div>
 
       <section className="mt-6">
         <h1 className="text-4xl font-semibold tracking-tight text-stone-900 sm:text-6xl dark:text-stone-50">
@@ -61,8 +72,7 @@ export default async function LandingPage() {
           How they voted.
         </h1>
         <p className="mt-6 max-w-xl text-lg leading-relaxed text-stone-700 dark:text-stone-300">
-          policy-stance lines up what New York state legislators say in public with how they actually vote — one dated
-          statement and one roll call at a time — and shows every step of the reasoning so you can check it yourself.
+          {`${SITE_NAME} lines up what New York state legislators say in public with how they actually vote — one dated statement and one roll call at a time — and shows every step of the reasoning so you can check it yourself.`}
         </p>
         <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">
           <Link
@@ -82,7 +92,7 @@ export default async function LandingPage() {
           <h2 id="example-heading" className={LABEL}>
             One comparison, start to finish
           </h2>
-          <span className="font-mono text-[11px] text-stone-400 dark:text-stone-500">illustrative · not a real person</span>
+          <span className="font-mono text-[11px] text-stone-500">illustrative · not a real person</span>
         </div>
         <div className="mt-3 divide-y divide-stone-200 rounded border border-stone-200 dark:divide-stone-800 dark:border-stone-800">
           <ExampleRow label="Stated" meta="press release · March 2024">
@@ -142,20 +152,28 @@ export default async function LandingPage() {
           Three steps, each one inspectable.
         </h2>
         <ol className="mt-8 space-y-8">
-          <Step n="1" title="Collect what they've said and sponsored">
-            Dated, sourced statements — press releases, speeches, news quotes — plus the bills each legislator personally
-            introduced. A name on a bill is about as explicit and verifiable as a stated position gets.
+          <Step n="1" title="Collect what they've said">
+            Dated, sourced statements — press releases, speeches, news quotes. We also record the bills each legislator
+            personally introduced, which show what they act on. Those are deeds, like votes, so they&apos;re shown alongside
+            but never used as the yardstick for a vote.
           </Step>
           <Step n="2" title="Match each statement to the votes that actually test it">
             Every vote is tagged by issue and scored for how squarely it tests that issue — a wildlife-awareness resolution
             isn&apos;t a test of someone&apos;s climate policy, even though both are loosely &ldquo;environment.&rdquo; Votes are
-            compared against the legislator&apos;s most recent position on that issue at the time of the vote.
+            compared against the legislator&apos;s most recent statement on that issue at the time of the vote.
           </Step>
           <Step n="3" title="Judge it, and show the work">
-            Each comparison gets a verdict and a one-sentence rationale. Judgments the AI isn&apos;t confident about are held out of
-            the score until a person reviews them, and every percentage is shown with the number of comparisons behind it.
+            Each comparison gets a verdict and a one-sentence rationale. A statement counts once, however many votes test it,
+            and results are shown as counts (statements tested, upheld, contradicted), not a grade. Judgments the AI isn&apos;t confident about,
+            and every possible contradiction, are held out until a person reviews them.
           </Step>
         </ol>
+        <Link
+          href="/methodology"
+          className="mt-8 inline-block font-mono text-sm text-teal-700 underline-offset-4 hover:underline dark:text-teal-400"
+        >
+          Read the full methodology →
+        </Link>
       </section>
 
       <section className="mt-20" aria-labelledby="live-heading">
@@ -163,34 +181,39 @@ export default async function LandingPage() {
         <h2 id="live-heading" className={H2}>
           {stats.pilot} of {stats.legislators} legislators so far.
         </h2>
-        <dl className="mt-6 grid grid-cols-2 gap-px overflow-hidden rounded border border-stone-200 bg-stone-200 sm:grid-cols-4 dark:border-stone-800 dark:bg-stone-800">
-          <Stat value={fmt(stats.positions)} label="statements and sponsored bills" />
+        <dl className="mt-6 grid grid-cols-2 gap-px overflow-hidden rounded border border-stone-200 bg-stone-200 sm:grid-cols-5 dark:border-stone-800 dark:bg-stone-800">
+          <Stat value={fmt(stats.statements)} label="public statements" />
+          <Stat value={fmt(stats.sponsored)} label="sponsored bills" />
           <Stat value={fmt(stats.votes)} label="roll-call votes on file" />
           <Stat value={fmt(stats.matches)} label="statement-to-vote comparisons" />
-          <Stat value={fmt(stats.counted)} label="counted toward scores" />
+          <Stat wide value={fmt(stats.tested)} label="statements tested" />
         </dl>
         <p className="mt-3 text-sm text-stone-500">
-          Most comparisons don&apos;t end up in a score, and that&apos;s deliberate. Many votes simply don&apos;t squarely test a given
-          statement, so they&apos;re judged &ldquo;not a clean test,&rdquo; and comparisons the AI wasn&apos;t sure about wait for human
-          review rather than being averaged in as if they were evidence.
+          Most comparisons don&apos;t end up counting toward a result, and that&apos;s deliberate. Many votes simply don&apos;t squarely test a given
+          statement, so they&apos;re judged &ldquo;not a clean test,&rdquo; and anything the AI wasn&apos;t sure about, or that looks
+          like a contradiction, waits for a person rather than being averaged in as if it were evidence.
         </p>
       </section>
 
       <section className="mt-20" aria-labelledby="caveats-heading">
-        <div className={LABEL}>What a score does and doesn&apos;t say</div>
+        <div className={LABEL}>What these numbers do and don&apos;t say</div>
         <h2 id="caveats-heading" className={H2}>
           Read it as a starting point, not a verdict.
         </h2>
         <dl className="mt-6 space-y-6">
-          <Caveat term="Consistency isn't the same as being right.">
+          <Caveat term="Upheld isn't the same as right.">
             Voting in line with what you&apos;ve said measures follow-through, not whether the position is good policy.
+          </Caveat>
+          <Caveat term="No contradictions found is not the same as none exist.">
+            A clear contradiction needs a statement and a vote about the same specific question, and today that match is rare. So
+            &ldquo;all upheld&rdquo; is a limit of the test, not proof that someone is consistent.
           </Caveat>
           <Caveat term="Only votes that reached the floor count.">
             Legislative leadership largely controls which bills get a vote, so a lack of votes on an issue may reflect leadership
             blocking it, not the member&apos;s own choice.
           </Caveat>
-          <Caveat term="“No vote has clearly tested this” is not zero.">
-            Plenty of issues have a stated position but no vote that squarely tests it. We&apos;d rather say that than pad a number.
+          <Caveat term="“No vote has clearly tested this” is not a pass.">
+            Plenty of issues have a stated position but no vote that squarely tests it. We&apos;d rather say that than invent a result.
           </Caveat>
           <Caveat term="An AI does the first pass, and it makes mistakes.">
             That&apos;s why every judgment links to its rationale and source, why uncertain ones are held back, and why this is
@@ -202,7 +225,7 @@ export default async function LandingPage() {
       <section className="mt-20" aria-labelledby="potential-heading">
         <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
           <div className={LABEL}>Where this could go</div>
-          <span className="font-mono text-[11px] text-stone-400 dark:text-stone-500">potential, not promises</span>
+          <span className="font-mono text-[11px] text-stone-500">potential, not promises</span>
         </div>
         <h2 id="potential-heading" className={H2}>
           Follow-through, visible before you vote.
@@ -284,9 +307,9 @@ function Step({ n, title, children }: { n: string; title: string; children: Reac
   );
 }
 
-function Stat({ value, label }: { value: string; label: string }) {
+function Stat({ value, label, wide }: { value: string; label: string; wide?: boolean }) {
   return (
-    <div className="flex flex-col-reverse justify-end bg-white p-4 dark:bg-stone-950">
+    <div className={`flex flex-col-reverse justify-end bg-white p-4 dark:bg-stone-950 ${wide ? "col-span-2 sm:col-span-1" : ""}`}>
       <dt className="mt-1 font-mono text-[11px] uppercase tracking-wide text-stone-500">{label}</dt>
       <dd className="font-mono text-2xl font-semibold tabular-nums text-stone-900 dark:text-stone-50">{value}</dd>
     </div>

@@ -106,6 +106,11 @@ export default async function PoliticianPage({
   const positionsById = new Map<string, Position>(allPositions.map((p) => [p.id, p]));
 
   const positions = activeTopic ? allPositions.filter((p) => p.topic === activeTopic) : allPositions;
+  // Sponsored bills are deeds, like votes -- kept apart from statements (words), which
+  // are the only thing votes are scored against.
+  const isBill = (p: { source_type: string }) => p.source_type === "bill_sponsorship";
+  const statements = positions.filter((p) => !isBill(p));
+  const sponsoredBills = positions.filter(isBill);
   const matches = activeTopic ? allMatches.filter((m) => m.topic === activeTopic) : allMatches;
   const summary = summarizeMatches(matches);
 
@@ -115,10 +120,11 @@ export default async function PoliticianPage({
     .map((t) => ({
       topic: t,
       label: formatTopicLabel(t),
-      positionCount: allPositions.filter((p) => p.topic === t).length,
+      positionCount: allPositions.filter((p) => p.topic === t && !isBill(p)).length,
+      billCount: allPositions.filter((p) => p.topic === t && isBill(p)).length,
       summary: summarizeMatches(allMatches.filter((m) => m.topic === t)),
     }))
-    .sort((a, b) => b.summary.scoreable - a.summary.scoreable);
+    .sort((a, b) => b.summary.statementsTested - a.summary.statementsTested);
 
   const featuredTopics = activeTopic
     ? topicStats.filter((t) => t.topic === activeTopic)
@@ -142,7 +148,7 @@ export default async function PoliticianPage({
       </div>
 
       <p className="mt-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
-        These scores reflect votes that reached the floor. Legislative leadership (the Speaker, Majority Leader) largely
+        These results reflect votes that reached the floor. Legislative leadership (the Speaker, Majority Leader) largely
         controls which bills get a vote — a lack of activity on a topic may reflect leadership blocking it, not this
         member&apos;s own choice.
       </p>
@@ -158,15 +164,14 @@ export default async function PoliticianPage({
 
       <div className="mt-4 grid grid-cols-1 gap-px overflow-hidden rounded border border-stone-200 bg-stone-200 sm:grid-cols-3 dark:border-stone-800 dark:bg-stone-800">
         <Stat label="Total votes" value={String(totalVotes ?? 0)} />
-        <Stat label="Matched to a position" value={String(matches.length)} />
+        <Stat label="Votes compared" value={String(matches.length)} />
         <Stat
-          label="Consistency"
-          value={summary.consistency === null ? "n/a" : `${Math.round(summary.consistency * 100)}% (n=${summary.scoreable})`}
+          label="Statements upheld"
+          value={summary.statementsTested === 0 ? "none tested" : `${summary.upheld} of ${summary.statementsTested}`}
         />
       </div>
       <p className="mt-2 font-mono text-xs text-stone-500">
-        {summary.kept} kept · {summary.broken} broken · {summary.partial} partial · {summary.na} na (not close enough
-        to the same question to score)
+        {`Of ${matches.length} comparisons, ${summary.votes} ${summary.votes === 1 ? "was a clean test" : "were clean tests"}, covering ${summary.statementsTested} statement${summary.statementsTested === 1 ? "" : "s"}: ${summary.upheld} upheld · ${summary.mixed} mixed · ${summary.contradicted} contradicted`}
         {summary.needsReview > 0 && ` · ${summary.needsReview} awaiting review (not counted above)`}
       </p>
 
@@ -179,30 +184,32 @@ export default async function PoliticianPage({
               href={t.topic === activeTopic ? `/politicians/${id}` : `/politicians/${id}?topic=${t.topic}`}
               className={`rounded border p-3 transition-colors hover:border-stone-400 dark:hover:border-stone-600 ${
                 t.topic === activeTopic ? "border-teal-600 dark:border-teal-500" : "border-stone-200 dark:border-stone-800"
-              } ${t.summary.scoreable === 0 ? "opacity-60" : ""}`}
+              } ${t.summary.statementsTested === 0 ? "border-dashed" : ""}`}
             >
               <div className="text-sm font-medium text-stone-800 dark:text-stone-200">{t.label}</div>
-              {t.summary.scoreable > 0 ? (
+              {t.summary.statementsTested > 0 ? (
                 <>
                   <div className="mt-1 flex items-baseline gap-2">
                     <span className="font-mono text-xl font-semibold tabular-nums text-stone-900 dark:text-stone-50">
-                      {Math.round((t.summary.consistency ?? 0) * 100)}%
+                      {`${t.summary.upheld} of ${t.summary.statementsTested}`}
                     </span>
-                    <span className="font-mono text-xs text-stone-500">n={t.summary.scoreable}</span>
+                    <span className="font-mono text-xs text-stone-500">
+                      {`upheld${t.summary.mixed > 0 ? ` · ${t.summary.mixed} mixed` : ""}${t.summary.contradicted > 0 ? ` · ${t.summary.contradicted} contradicted` : ""}`}
+                    </span>
                   </div>
                   <div className="mt-2 flex h-1.5 overflow-hidden rounded-full bg-stone-200 dark:bg-stone-700">
-                    <span className={BAR_STYLE.kept} style={{ width: `${(t.summary.kept / t.summary.scoreable) * 100}%` }} />
-                    <span className={BAR_STYLE.broken} style={{ width: `${(t.summary.broken / t.summary.scoreable) * 100}%` }} />
-                    <span className={BAR_STYLE.partial} style={{ width: `${(t.summary.partial / t.summary.scoreable) * 100}%` }} />
+                    <span className={BAR_STYLE.kept} style={{ width: `${(t.summary.upheld / t.summary.statementsTested) * 100}%` }} />
+                    <span className={BAR_STYLE.partial} style={{ width: `${(t.summary.mixed / t.summary.statementsTested) * 100}%` }} />
+                    <span className={BAR_STYLE.broken} style={{ width: `${(t.summary.contradicted / t.summary.statementsTested) * 100}%` }} />
                   </div>
                 </>
               ) : (
                 <div className="mt-1 text-xs text-stone-500">
-                  {t.positionCount === 0 ? "no stated position yet" : "no vote has clearly tested this yet"}
+                  {t.positionCount === 0 ? "no public statement found yet" : "no vote has clearly tested this yet"}
                 </div>
               )}
               {t.summary.needsReview > 0 && (
-                <div className="mt-1 font-mono text-[11px] text-stone-400 dark:text-stone-500">
+                <div className="mt-1 font-mono text-[11px] text-stone-500">
                   {t.summary.needsReview} awaiting review
                 </div>
               )}
@@ -231,18 +238,18 @@ export default async function PoliticianPage({
                   {stance ? (
                     <div className="mt-2">
                       <p className="text-stone-800 dark:text-stone-200">{stance}</p>
-                      <p className="mt-1 font-mono text-[11px] text-stone-400 dark:text-stone-500">
-                        {`AI-inferred from ${t.positionCount} stated position${t.positionCount === 1 ? "" : "s"} and sponsored bills — see full record below for the source list.`}
+                      <p className="mt-1 font-mono text-[11px] text-stone-500">
+                        {`AI-inferred from ${t.positionCount} statement${t.positionCount === 1 ? "" : "s"} and ${t.billCount} sponsored bill${t.billCount === 1 ? "" : "s"} — see the full record below for the sources.`}
                       </p>
                     </div>
                   ) : (
-                    position && <p className="mt-2 text-stone-800 dark:text-stone-200">&ldquo;{position.statement_text}&rdquo;</p>
+                    position && <p className="mt-2 text-stone-800 dark:text-stone-200">{position.statement_text}</p>
                   )}
                   {t.summary.needsReview > 0 && (
                     <p className="mt-2 rounded bg-stone-50 p-2 text-xs text-stone-600 dark:bg-stone-900 dark:text-stone-400">
                       {t.summary.needsReview === 1
-                        ? "1 more vote on this topic is still awaiting review and isn't counted in the score above."
-                        : `${t.summary.needsReview} more votes on this topic are still awaiting review and aren't counted in the score above.`}
+                        ? "1 more vote on this topic is still awaiting review and isn't counted in the result above."
+                        : `${t.summary.needsReview} more votes on this topic are still awaiting review and aren't counted in the result above.`}
                     </p>
                   )}
                   {examples.map((match) => {
@@ -269,16 +276,18 @@ export default async function PoliticianPage({
 
       <details className="mt-10 rounded border border-stone-200 dark:border-stone-800">
         <summary className="cursor-pointer p-4 font-mono text-xs uppercase tracking-wider text-stone-500">
-          Full record — {positions.length} position{positions.length === 1 ? "" : "s"}, {matches.length} matched vote
-          {matches.length === 1 ? "" : "s"}
+          {`Full record — ${statements.length} statement${statements.length === 1 ? "" : "s"}, ${sponsoredBills.length} sponsored bill${sponsoredBills.length === 1 ? "" : "s"}, ${matches.length} vote comparison${matches.length === 1 ? "" : "s"}`}
         </summary>
 
         <section className="border-t border-stone-200 p-4 dark:border-stone-800">
           <h2 className="text-lg font-semibold text-stone-900 dark:text-stone-50">
-            Positions <span className="font-mono text-sm font-normal text-stone-500">({positions.length})</span>
+            Statements <span className="font-mono text-sm font-normal text-stone-500">({statements.length})</span>
           </h2>
+          <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">
+            Each is an AI-written summary of what the linked source says, not a word-for-word quote. Open the source to read the original.
+          </p>
           <div className="mt-3 space-y-3">
-            {positions.map((position) => (
+            {statements.map((position) => (
               <article key={position.id} className="rounded border border-stone-200 p-4 dark:border-stone-800">
                 <div className="flex items-center justify-between gap-3">
                   <span className="rounded bg-teal-50 px-2 py-0.5 font-mono text-[11px] font-semibold uppercase tracking-wide text-teal-800 dark:bg-teal-950 dark:text-teal-300">
@@ -286,7 +295,7 @@ export default async function PoliticianPage({
                   </span>
                   <span className="font-mono text-xs text-stone-500">sourcing confidence {position.extraction_confidence}</span>
                 </div>
-                <p className="mt-2 text-stone-800 dark:text-stone-200">&ldquo;{position.statement_text}&rdquo;</p>
+                <p className="mt-2 text-stone-800 dark:text-stone-200">{position.statement_text}</p>
                 <div className="mt-2 flex flex-wrap gap-3 font-mono text-xs text-stone-500">
                   <span className="font-semibold text-amber-700 dark:text-amber-500">{position.stated_at}</span>
                   <span className="uppercase">{position.source_type}</span>
@@ -297,6 +306,31 @@ export default async function PoliticianPage({
               </article>
             ))}
           </div>
+        </section>
+
+        <section className="border-t border-stone-200 p-4 dark:border-stone-800">
+          <details>
+            <summary className="cursor-pointer text-lg font-semibold text-stone-900 dark:text-stone-50">
+              {`Sponsored bills (${sponsoredBills.length})`}
+            </summary>
+            <p className="mt-1 text-sm text-stone-600 dark:text-stone-400">
+              Bills this legislator introduced as primary sponsor. These are deeds, like votes, so they are shown for context and feed the stance summary, but votes are not scored against them.
+            </p>
+            <ul className="mt-3 divide-y divide-stone-200 dark:divide-stone-800">
+              {sponsoredBills.map((bill) => (
+                <li key={bill.id} className="py-2 text-sm text-stone-700 dark:text-stone-300">
+                  <span className="mr-2 font-mono text-[11px] uppercase text-stone-500">{bill.topic}</span>
+                  {bill.statement_text}
+                  <span className="ml-2 font-mono text-xs text-stone-500">{bill.stated_at}</span>
+                  {bill.source_url && (
+                    <a href={bill.source_url} target="_blank" rel="noopener noreferrer" className="ml-2 font-mono text-xs text-teal-700 underline dark:text-teal-400">
+                      bill ↗
+                    </a>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </details>
         </section>
 
         <section className="border-t border-stone-200 p-4 dark:border-stone-800">
@@ -326,7 +360,13 @@ export default async function PoliticianPage({
                       )}
                     </div>
                   </div>
-                  <p className="mt-2 text-stone-800 dark:text-stone-200">{match.rationale}</p>
+                  {match.classification === "broken" && match.status === "needs_review" ? (
+                    <p className="mt-2 text-stone-600 dark:text-stone-400">
+                      Flagged as a possible contradiction. Held back until a person reviews it.
+                    </p>
+                  ) : (
+                    <p className="mt-2 text-stone-800 dark:text-stone-200">{match.rationale}</p>
+                  )}
                   {vote && (
                     <div className="mt-2 rounded bg-stone-50 p-2 font-mono text-xs text-stone-600 dark:bg-stone-900 dark:text-stone-400">
                       Voted <span className="font-semibold">{vote.vote_value}</span> on &ldquo;{vote.bill_title}&rdquo; ({vote.voted_at})
@@ -334,7 +374,7 @@ export default async function PoliticianPage({
                   )}
                   {position && (
                     <div className="mt-1 rounded bg-stone-50 p-2 font-mono text-xs text-stone-600 dark:bg-stone-900 dark:text-stone-400">
-                      Compared against: &ldquo;{position.statement_text}&rdquo; ({position.stated_at})
+                      Compared against: {position.statement_text} ({position.stated_at})
                     </div>
                   )}
                 </article>
