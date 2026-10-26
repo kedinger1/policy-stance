@@ -4,6 +4,7 @@ import { adminClient, isAdmin } from "@/lib/admin";
 import { fetchAllRows, fetchRowsForIds } from "@/lib/supabase";
 import { formatTopicLabel } from "@/lib/topics";
 import { logout } from "@/app/login/actions";
+import { AdminTabs } from "../AdminTabs";
 import { resolveMatches } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -54,7 +55,8 @@ export default async function ReviewPage() {
           </button>
         </form>
       </div>
-      <h1 className="mt-2 text-3xl font-semibold tracking-tight text-stone-900 dark:text-stone-50">Possible contradictions</h1>
+      <h1 className="mt-2 mb-4 text-3xl font-semibold tracking-tight text-stone-900 dark:text-stone-50">Possible contradictions</h1>
+      <AdminTabs />
       <p className="mt-3 max-w-xl text-stone-600 dark:text-stone-400">
         {`${flagged.length} flagged vote${flagged.length === 1 ? "" : "s"} across ${groups.length} statement${groups.length === 1 ? "" : "s"}. `}
         Read the source, then decide. Confirming makes a contradiction count toward the result. &ldquo;Not a contradiction&rdquo;
